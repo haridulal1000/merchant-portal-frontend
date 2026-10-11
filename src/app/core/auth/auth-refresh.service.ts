@@ -2,24 +2,25 @@ import { Injectable, inject } from '@angular/core';
 import {
   HttpBackend,
   HttpErrorResponse,
+  HttpEvent,
   HttpRequest,
   HttpResponse,
 } from '@angular/common/http';
 import {
   Observable,
   catchError,
+  filter,
   finalize,
   map,
   shareReplay,
+  take,
   tap,
   throwError,
 } from 'rxjs';
-import { TokenStorageService } from '@core/auth/token-storage.service';
-import { TokenResponse } from '@core/models/user.model';
 import { environment } from '@env/environment';
+import type { TokenResponse } from '@core/models/user.model';
+import { TokenStorageService } from './token-storage.service';
 
-
-/** Request body sent to POST /auth/refresh. */
 interface RefreshRequestBody {
   refresh_token: string;
 }
@@ -32,22 +33,22 @@ interface RefreshRequestBody {
  *   - If the interceptor called AuthService to refresh, we would recurse.
  *   - HttpBackend bypasses interceptors entirely, so we call it directly.
  *
+ * HttpBackend emits a stream of HttpEvents (Sent, HeaderResponse, Response).
+ * We filter down to the final HttpResponse, take the first one, and use
+ * only its body. Reading events with `map` (as opposed to `filter + take`)
+ * would throw on the first intermediate event and silently drop the actual
+ * response.
+ *
  * The single-flight pattern guarantees that N concurrent 401s trigger
- * exactly ONE POST /auth/refresh. The first 401 starts the refresh; every
- * subsequent 401 subscribes to the same in-flight observable.
+ * exactly ONE POST /auth/refresh.
  */
 @Injectable({ providedIn: 'root' })
 export class AuthRefreshService {
   private readonly backend = inject(HttpBackend);
   private readonly storage = inject(TokenStorageService);
 
-  /** Holds the in-flight refresh while it is running; null otherwise. */
   private inFlight$: Observable<string> | null = null;
 
-  /**
-   * Returns an observable that emits the NEW access token once refresh
-   * succeeds. Concurrent callers share the same underlying HTTP request.
-   */
   refresh(): Observable<string> {
     if (this.inFlight$) {
       return this.inFlight$;
@@ -57,11 +58,14 @@ export class AuthRefreshService {
     if (!refreshToken) {
       return throwError(
         () =>
-          new HttpErrorResponse({ status: 401, statusText: 'No refresh token' }),
+          new HttpErrorResponse({
+            status: 401,
+            statusText: 'Unauthorized',
+            error: { detail: 'No refresh token available' },
+          }),
       );
     }
 
-    // HttpRequest<T> is generic over the REQUEST BODY type, not the response.
     const request = new HttpRequest<RefreshRequestBody>(
       'POST',
       `${environment.apiUrl}/auth/refresh`,
@@ -69,30 +73,50 @@ export class AuthRefreshService {
     );
 
     const source$ = this.backend.handle(request).pipe(
-      map((event) => {
-        if (!(event instanceof HttpResponse)) {
-          throw new Error('Unexpected non-response event from refresh endpoint');
+      // HttpBackend emits Sent / HeaderResponse / Response.
+      // We only want the final HttpResponse, and we only want one.
+      filter(
+        (event: HttpEvent<unknown>): event is HttpResponse<TokenResponse> =>
+          event instanceof HttpResponse,
+      ),
+      take(1),
+      map((response) => {
+        const body = response.body;
+        if (!body?.access_token || !body?.refresh_token) {
+          throw new HttpErrorResponse({
+            status: 500,
+            statusText: 'Internal Server Error',
+            error: { detail: 'Malformed refresh response' },
+          });
         }
-        // HttpBackend is untyped; we assert the known backend contract here.
-        return event.body as TokenResponse;
+        return body;
       }),
       tap((tokens) => {
-        // Persist the new pair before any retry uses it.
         this.storage.updateTokens(tokens.access_token, tokens.refresh_token);
       }),
       map((tokens) => tokens.access_token),
+      // Normalize anything that isn't already an HttpErrorResponse so
+      // downstream consumers can rely on the standard Angular shape.
+      catchError((error: unknown) => {
+        if (error instanceof HttpErrorResponse) {
+          return throwError(() => error);
+        }
+        return throwError(
+          () =>
+            new HttpErrorResponse({
+              status: 0,
+              statusText: 'Unknown Error',
+              error: { detail: String(error) },
+            }),
+        );
+      }),
     );
 
     this.inFlight$ = source$.pipe(
-      // Buffer the final value so late subscribers get the token even
-      // after the source has completed.
       shareReplay({ bufferSize: 1, refCount: false }),
-      // Clear the cache when the refresh terminates (success or error),
-      // so the NEXT 401 starts a fresh refresh.
       finalize(() => {
         this.inFlight$ = null;
       }),
-      catchError((error) => throwError(() => error)),
     );
 
     return this.inFlight$;

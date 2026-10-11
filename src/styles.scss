@@ -50,3 +50,23 @@ html {
     outline-offset: 2px;
   }
 }
+
+/* ------------------------------------------------------------------
+   Snackbar variants.
+   Material applies the panelClass on the overlay container; we override
+   the surface colors so error / info / success are visually distinct.
+   ------------------------------------------------------------------ */
+.mat-mdc-snack-bar-container {
+  &.app-snack-error .mdc-snackbar__surface {
+    background-color: #b91c1c; /* red-700 */
+    color: #ffffff;
+  }
+  &.app-snack-info .mdc-snackbar__surface {
+    background-color: #1e293b; /* surface-800 */
+    color: #ffffff;
+  }
+  &.app-snack-success .mdc-snackbar__surface {
+    background-color: #047857; /* emerald-700 */
+    color: #ffffff;
+  }
+}

@@ -48,10 +48,10 @@ The frontend talks to a FastAPI backend. Summary below.
 
 ### Auth
 
-- `POST /auth/signup`      → `{ access_token, refresh_token, user }`
-- `POST /auth/login`       → `{ access_token, refresh_token, user }`
-- `POST /auth/refresh`     → `{ access_token, refresh_token, user }`
-- `GET  /auth/me`          → `User`                (Bearer required)
+- `POST /auth/signup` → `{ access_token, refresh_token, user }`
+- `POST /auth/login` → `{ access_token, refresh_token, user }`
+- `POST /auth/refresh` → `{ access_token, refresh_token, user }`
+- `GET  /auth/me` → `User` (Bearer required)
 
 Access tokens expire in 15 minutes. Refresh tokens expire in 7 days and are rotated on every use (single-use). Concurrent 401s must trigger exactly one refresh call; queued requests retry with the new token.
 
@@ -63,16 +63,16 @@ Access tokens expire in 15 minutes. Refresh tokens expire in 7 days and are rota
 
 ### Applications
 
-- `GET    /applications`                (paginated, filter by status + search)
+- `GET    /applications` (paginated, filter by status + search)
 - `GET    /applications/:id`
-- `POST   /applications`                (SALES/ADMIN)
-- `PATCH  /applications/:id`            (SALES/ADMIN, DRAFT only)
-- `PATCH  /applications/:id/submit`     (SALES/ADMIN, DRAFT → SUBMITTED)
+- `POST   /applications` (SALES/ADMIN)
+- `PATCH  /applications/:id` (SALES/ADMIN, DRAFT only)
+- `PATCH  /applications/:id/submit` (SALES/ADMIN, DRAFT → SUBMITTED)
 
 ### Reviews
 
 - `GET  /applications/:id/reviews`
-- `POST /applications/:id/reviews`      (REVIEWER/ADMIN)
+- `POST /applications/:id/reviews` (REVIEWER/ADMIN)
 
 ### Pagination envelope
 
@@ -222,13 +222,13 @@ npm run test:watch # watch mode
 
 ### What is covered
 
-| Spec | What it verifies |
-|---|---|
-| `core/http/auth.interceptor.spec.ts` | Bearer attachment, public-endpoint bypass, **single-flight refresh across 3 concurrent 401s**, session clear on refresh failure |
-| `core/auth/role.guard.spec.ts` | Allows correct role, redirects wrong role to `/dashboard`, redirects unauthenticated to `/login` with `returnUrl` |
-| `core/auth/guest.guard.spec.ts` | Allows unauthenticated users, redirects authenticated users away from public routes |
-| `shared/components/masked-field/*.spec.ts` | Masked by default, reveals on click, re-masks, hides toggle when `revealable=false`, `aria-pressed` reflects state |
-| `shared/components/save-status/*.spec.ts` | Correct label per status, `aria-live` region present |
+| Spec                                       | What it verifies                                                                                                                |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `core/http/auth.interceptor.spec.ts`       | Bearer attachment, public-endpoint bypass, **single-flight refresh across 3 concurrent 401s**, session clear on refresh failure |
+| `core/auth/role.guard.spec.ts`             | Allows correct role, redirects wrong role to `/dashboard`, redirects unauthenticated to `/login` with `returnUrl`               |
+| `core/auth/guest.guard.spec.ts`            | Allows unauthenticated users, redirects authenticated users away from public routes                                             |
+| `shared/components/masked-field/*.spec.ts` | Masked by default, reveals on click, re-masks, hides toggle when `revealable=false`, `aria-pressed` reflects state              |
+| `shared/components/save-status/*.spec.ts`  | Correct label per status, `aria-live` region present                                                                            |
 
 ### The single-flight refresh test
 
@@ -264,7 +264,7 @@ Each standalone component imports only the Material modules it needs:
 
 ```typescript
 import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule }   from '@angular/material/icon';
+import { MatIconModule } from '@angular/material/icon';
 ```
 
 No shared Material barrel module. Tree-shaking stays clean and each component's dependencies are visible at the top of the file.
@@ -311,7 +311,19 @@ Public API consumed by the login/signup pages and the header. Provides `login()`
 
 ### AuthRefreshService (`core/auth/auth-refresh.service.ts`)
 
-The concurrent-401 coordinator. Uses `HttpBackend` directly (bypassing interceptors, so no recursion) to `POST /auth/refresh`. Holds an `inFlight$` observable. The first 401 starts the refresh; every other 401 subscribes to the same observable via `shareReplay({ bufferSize: 1, refCount: false })`. `finalize` clears `inFlight$` so the NEXT 401 starts a fresh refresh.
+The concurrent-401 coordinator. Uses `HttpBackend` directly (bypassing
+interceptors, so no recursion) to `POST /auth/refresh`. `HttpBackend`
+emits a stream of `HttpEvent`s (Sent, HeaderResponse, Response), so the
+pipeline uses `filter(event => event instanceof HttpResponse)` and
+`take(1)` to extract only the final response body — reading the stream
+with `map` would throw on the first intermediate event and silently drop
+the real response.
+
+Holds an `inFlight$` observable. The first 401 starts the refresh; every
+other 401 subscribes to the same observable via
+`shareReplay({ bufferSize: 1, refCount: false })`. `finalize` clears
+`inFlight$` so the NEXT 401 starts a fresh refresh. All failures are
+normalized to `HttpErrorResponse` before leaving the service.
 
 ### authInterceptor (`core/http/auth.interceptor.ts`)
 
