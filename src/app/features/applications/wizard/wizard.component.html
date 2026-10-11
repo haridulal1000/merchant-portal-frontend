@@ -1,0 +1,222 @@
+<section class="mx-auto max-w-3xl space-y-4">
+  <!-- Header ------------------------------------------------------------>
+  <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h1 class="text-2xl font-semibold">New merchant application</h1>
+      <p class="text-sm text-surface-800">
+        Your draft is saved automatically as you type.
+      </p>
+    </div>
+
+    <app-save-status [status]="saveStatus()" />
+  </header>
+
+  @if (submitting()) {
+    <mat-progress-bar mode="indeterminate" />
+  }
+
+  @if (submitError(); as msg) {
+    <div
+      role="alert"
+      class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+    >
+      {{ msg }}
+    </div>
+  }
+
+  <!-- Stepper ----------------------------------------------------------->
+  <mat-card>
+    <mat-card-content>
+      <mat-stepper linear #stepper>
+        <!-- STEP 1: Merchant details ----------------------------------->
+        <mat-step [stepControl]="merchantGroup" label="Merchant details">
+          <form [formGroup]="merchantGroup" class="flex flex-col gap-2 pt-4">
+            <mat-form-field appearance="outline" class="w-full">
+              <mat-label>Merchant name</mat-label>
+              <input
+                matInput
+                formControlName="merchant_name"
+                autocomplete="organization"
+                required
+              />
+              <mat-icon matPrefix>storefront</mat-icon>
+              @if (merchantGroup.controls.merchant_name.hasError('required')) {
+                <mat-error>Merchant name is required.</mat-error>
+              } @else if (merchantGroup.controls.merchant_name.hasError('minlength')) {
+                <mat-error>Name must be at least 2 characters.</mat-error>
+              }
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="w-full">
+              <mat-label>Business type</mat-label>
+              <mat-select formControlName="business_type" required>
+                @for (t of businessTypes; track t) {
+                  <mat-option [value]="t">{{ t }}</mat-option>
+                }
+              </mat-select>
+              <mat-icon matPrefix>category</mat-icon>
+              @if (merchantGroup.controls.business_type.hasError('required')) {
+                <mat-error>Please select a business type.</mat-error>
+              }
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="w-full">
+              <mat-label>Annual revenue (USD)</mat-label>
+              <input
+                matInput
+                type="number"
+                min="1"
+                step="1000"
+                formControlName="annual_revenue"
+                required
+              />
+              <mat-icon matPrefix>payments</mat-icon>
+              @if (merchantGroup.controls.annual_revenue.hasError('required')) {
+                <mat-error>Annual revenue is required.</mat-error>
+              } @else if (merchantGroup.controls.annual_revenue.hasError('min')) {
+                <mat-error>Revenue must be greater than zero.</mat-error>
+              }
+            </mat-form-field>
+
+            <div class="mt-2 flex justify-end">
+              <button
+                mat-flat-button
+                color="primary"
+                matStepperNext
+                type="button"
+                [disabled]="merchantGroup.invalid"
+              >
+                Next
+                <mat-icon>arrow_forward</mat-icon>
+              </button>
+            </div>
+          </form>
+        </mat-step>
+
+        <!-- STEP 2: Contact details ------------------------------------>
+        <mat-step [stepControl]="contactGroup" label="Contact details">
+          <form [formGroup]="contactGroup" class="flex flex-col gap-2 pt-4">
+            <mat-form-field appearance="outline" class="w-full">
+              <mat-label>Contact email</mat-label>
+              <input
+                matInput
+                type="email"
+                formControlName="contact_email"
+                autocomplete="email"
+                required
+              />
+              <mat-icon matPrefix>mail</mat-icon>
+              @if (contactGroup.controls.contact_email.hasError('required')) {
+                <mat-error>Email is required.</mat-error>
+              } @else if (contactGroup.controls.contact_email.hasError('strictEmail')) {
+                <mat-error>Enter a valid email (e.g. name&#64;example.com).</mat-error>
+              }
+            </mat-form-field>
+
+            <mat-form-field appearance="outline" class="w-full">
+              <mat-label>Contact phone</mat-label>
+              <input
+                matInput
+                type="tel"
+                formControlName="contact_phone"
+                autocomplete="tel"
+                required
+              />
+              <mat-icon matPrefix>phone</mat-icon>
+              @if (contactGroup.controls.contact_phone.hasError('required')) {
+                <mat-error>Phone number is required.</mat-error>
+              } @else if (contactGroup.controls.contact_phone.hasError('minlength')) {
+                <mat-error>Phone number must be at least 7 digits.</mat-error>
+              }
+            </mat-form-field>
+
+            <div class="mt-2 flex justify-between">
+              <button mat-stroked-button matStepperPrevious type="button">
+                <mat-icon>arrow_back</mat-icon>
+                Back
+              </button>
+              <button
+                mat-flat-button
+                color="primary"
+                matStepperNext
+                type="button"
+                [disabled]="contactGroup.invalid"
+              >
+                Review
+                <mat-icon>arrow_forward</mat-icon>
+              </button>
+            </div>
+          </form>
+        </mat-step>
+
+        <!-- STEP 3: Review & submit ------------------------------------>
+        <mat-step label="Review & submit">
+          <div class="flex flex-col gap-4 pt-4">
+            <div class="rounded-md border border-surface-200 bg-surface-50 p-4 text-sm">
+              <dl class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-surface-800">Merchant</dt>
+                  <dd class="mt-0.5 font-medium">
+                    {{ merchantGroup.controls.merchant_name.value }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-surface-800">Business type</dt>
+                  <dd class="mt-0.5 font-medium">
+                    {{ merchantGroup.controls.business_type.value }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-surface-800">Annual revenue</dt>
+                  <dd class="mt-0.5 font-medium">
+                    {{ merchantGroup.controls.annual_revenue.value | currency: 'USD' : 'symbol' : '1.0-0' }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-surface-800">Contact email</dt>
+                  <dd class="mt-0.5 font-medium">
+                    {{ contactGroup.controls.contact_email.value }}
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-xs uppercase tracking-wide text-surface-800">Contact phone</dt>
+                  <dd class="mt-0.5 font-medium">
+                    {{ contactGroup.controls.contact_phone.value }}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <p class="text-sm text-surface-800">
+              Submitting moves this application to the review queue. You will
+              not be able to edit it afterwards.
+            </p>
+
+            <div class="flex flex-col gap-2 sm:flex-row sm:justify-between">
+              <button
+                mat-stroked-button
+                matStepperPrevious
+                type="button"
+                class="sm:w-auto"
+              >
+                <mat-icon>arrow_back</mat-icon>
+                Back
+              </button>
+              <button
+                mat-flat-button
+                color="primary"
+                type="button"
+                class="sm:w-auto"
+                [disabled]="!formValid() || submitting()"
+                (click)="submit()"
+              >
+                <mat-icon>send</mat-icon>
+                {{ submitting() ? 'Submitting…' : 'Submit for review' }}
+              </button>
+            </div>
+          </div>
+        </mat-step>
+      </mat-stepper>
+    </mat-card-content>
+  </mat-card>
+</section>

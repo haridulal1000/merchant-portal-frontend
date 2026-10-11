@@ -1,0 +1,42 @@
+<mat-toolbar class="flex items-center gap-2 border-b border-surface-200">
+  <button
+    mat-icon-button
+    type="button"
+    aria-label="Toggle navigation"
+    (click)="menuToggled.emit()"
+  >
+    <mat-icon>menu</mat-icon>
+  </button>
+
+  <span class="text-lg font-medium">Merchant Portal</span>
+
+  <span class="flex-1"></span>
+
+  @if (user(); as u) {
+    <button
+      mat-button
+      type="button"
+      [matMenuTriggerFor]="userMenu"
+      aria-label="User menu"
+    >
+      <mat-icon>account_circle</mat-icon>
+      <span class="hidden sm:inline">{{ u.name }}</span>
+      <span
+        class="hidden md:inline ml-2 rounded-full bg-surface-100 px-2 py-0.5 text-xs font-medium text-surface-800"
+      >
+        {{ u.role }}
+      </span>
+    </button>
+
+    <mat-menu #userMenu="matMenu">
+      <button mat-menu-item type="button" (click)="goToProfile()">
+        <mat-icon>dashboard</mat-icon>
+        <span>Dashboard</span>
+      </button>
+      <button mat-menu-item type="button" (click)="logout()">
+        <mat-icon>logout</mat-icon>
+        <span>Sign out</span>
+      </button>
+    </mat-menu>
+  }
+</mat-toolbar>

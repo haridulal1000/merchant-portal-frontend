@@ -1,0 +1,52 @@
+@use '@angular/material' as mat;
+
+@import "tailwindcss";
+
+/* ------------------------------------------------------------------
+   Angular Material M3 theme.
+   Azure palette chosen as a neutral enterprise default.
+   Density -1 tightens form fields and tables for data-dense screens.
+   ------------------------------------------------------------------ */
+html {
+  @include mat.theme((
+    color: (
+      primary: mat.$azure-palette,
+      tertiary: mat.$blue-palette,
+    ),
+    typography: Roboto,
+    density: -1,
+  ));
+}
+
+/* ------------------------------------------------------------------
+   Tailwind custom theme tokens.
+   Declared here so utilities like bg-surface-50 work everywhere.
+   ------------------------------------------------------------------ */
+@theme {
+  --color-surface-0:   #ffffff;
+  --color-surface-50:  #f8fafc;
+  --color-surface-100: #f1f5f9;
+  --color-surface-200: #e2e8f0;
+  --color-surface-800: #1e293b;
+  --color-surface-900: #0f172a;
+}
+
+/* ------------------------------------------------------------------
+   Base layer: html/body defaults and accessibility baseline.
+   ------------------------------------------------------------------ */
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-surface-50 text-surface-900 antialiased;
+    font-family: Roboto, system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0;
+  }
+  /* High-visibility focus ring across the app for keyboard users. */
+  :focus-visible {
+    outline: 2px solid var(--mat-sys-primary);
+    outline-offset: 2px;
+  }
+}

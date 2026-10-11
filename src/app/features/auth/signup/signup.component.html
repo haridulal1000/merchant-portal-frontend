@@ -1,0 +1,122 @@
+<section class="min-h-screen flex items-center justify-center p-4 bg-surface-50">
+  <mat-card class="w-full max-w-lg">
+    <mat-card-header class="flex flex-col items-start gap-1 pb-2">
+      <mat-card-title class="text-2xl font-semibold">Create an account</mat-card-title>
+      <mat-card-subtitle>Choose your role to get started</mat-card-subtitle>
+    </mat-card-header>
+
+    <mat-card-content>
+      @if (submitting()) {
+        <mat-progress-bar mode="indeterminate" class="mb-4" />
+      }
+
+      @if (errorMessage(); as msg) {
+        <div
+          role="alert"
+          class="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+        >
+          {{ msg }}
+        </div>
+      }
+
+      <form [formGroup]="form" (ngSubmit)="submit()" novalidate class="flex flex-col gap-2">
+        <mat-form-field appearance="outline" class="w-full">
+          <mat-label>Full name</mat-label>
+          <input matInput formControlName="name" autocomplete="name" required />
+          <mat-icon matPrefix>person</mat-icon>
+          @if (form.controls.name.hasError('required')) {
+            <mat-error>Name is required.</mat-error>
+          } @else if (form.controls.name.hasError('minlength')) {
+            <mat-error>Name must be at least 2 characters.</mat-error>
+          }
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="w-full">
+          <mat-label>Email</mat-label>
+          <input matInput type="email" formControlName="email" autocomplete="email" required />
+          <mat-icon matPrefix>mail</mat-icon>
+          @if (form.controls.email.hasError('required')) {
+            <mat-error>Email is required.</mat-error>
+          } @else if (form.controls.email.hasError('email')) {
+            <mat-error>Enter a valid email address.</mat-error>
+          }
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="w-full">
+          <mat-label>Role</mat-label>
+          <mat-select formControlName="role" required>
+            @for (option of roleOptions; track option.value) {
+              <mat-option [value]="option.value">
+                <div class="flex flex-col">
+                  <span>{{ option.label }}</span>
+                  <span class="text-xs text-surface-800">{{ option.hint }}</span>
+                </div>
+              </mat-option>
+            }
+          </mat-select>
+          <mat-icon matPrefix>badge</mat-icon>
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="w-full">
+          <mat-label>Password</mat-label>
+          <input
+            matInput
+            [type]="passwordVisible() ? 'text' : 'password'"
+            formControlName="password"
+            autocomplete="new-password"
+            required
+          />
+          <mat-icon matPrefix>lock</mat-icon>
+          <button
+            mat-icon-button
+            matSuffix
+            type="button"
+            [attr.aria-label]="passwordVisible() ? 'Hide password' : 'Show password'"
+            (click)="togglePassword()"
+          >
+            <mat-icon>{{ passwordVisible() ? 'visibility_off' : 'visibility' }}</mat-icon>
+          </button>
+          @if (form.controls.password.hasError('required')) {
+            <mat-error>Password is required.</mat-error>
+          } @else if (form.controls.password.hasError('minlength')) {
+            <mat-error>Password must be at least 6 characters.</mat-error>
+          }
+        </mat-form-field>
+
+        <mat-form-field appearance="outline" class="w-full">
+          <mat-label>Confirm password</mat-label>
+          <input
+            matInput
+            [type]="passwordVisible() ? 'text' : 'password'"
+            formControlName="confirmPassword"
+            autocomplete="new-password"
+            required
+          />
+          <mat-icon matPrefix>lock</mat-icon>
+          @if (form.controls.confirmPassword.hasError('required')) {
+            <mat-error>Please confirm your password.</mat-error>
+          } @else if (form.hasError('passwordsMismatch')) {
+            <mat-error>Passwords do not match.</mat-error>
+          }
+        </mat-form-field>
+
+        <button
+          mat-flat-button
+          color="primary"
+          type="submit"
+          class="mt-2 h-11"
+          [disabled]="submitting() || form.invalid"
+        >
+          {{ submitting() ? 'Creating account…' : 'Create account' }}
+        </button>
+      </form>
+    </mat-card-content>
+
+    <mat-card-actions class="flex justify-center pb-4">
+      <span class="text-sm text-surface-800">
+        Already have an account?
+        <a routerLink="/login" class="text-blue-600 hover:underline">Sign in</a>
+      </span>
+    </mat-card-actions>
+  </mat-card>
+</section>
