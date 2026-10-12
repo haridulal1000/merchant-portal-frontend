@@ -6,10 +6,10 @@ import { roleGuard } from '@core/auth/role.guard';
 /**
  * Top-level route table.
  *
- *  - /login, /signup are public (no shell) and use guestGuard so a
- *    logged-in user is redirected away from them.
+ *  - /login, /signup are public (guestGuard) — no shell.
  *  - The shell wraps authenticated routes and hosts the header + sidenav.
  *  - Feature areas are lazy-loaded via loadComponent.
+ *  - /admin/* is gated behind roleGuard('ADMIN').
  */
 export const routes: Routes = [
   {
@@ -51,6 +51,14 @@ export const routes: Routes = [
         loadComponent: () =>
           import('@features/applications/detail/detail.component').then(
             (m) => m.DetailComponent,
+          ),
+      },
+      {
+        path: 'admin/users',
+        canActivate: [roleGuard('ADMIN')],
+        loadComponent: () =>
+          import('@features/admin/users/users.component').then(
+            (m) => m.UsersComponent,
           ),
       },
       {

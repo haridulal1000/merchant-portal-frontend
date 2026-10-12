@@ -3,8 +3,7 @@ import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
 import { RouterLink, RouterLinkActive } from '@angular/router';
 import { AuthService } from '@core/auth/auth.service';
-import { UserRole } from '@core/models/user.model';
-
+import type { UserRole } from '@core/models/user.model';
 
 interface NavItem {
   label: string;
@@ -34,12 +33,20 @@ export class NavComponent {
       route: '/applications/new',
       roles: ['SALES', 'ADMIN'],
     },
+    {
+      label: 'Users',
+      icon: 'manage_accounts',
+      route: '/admin/users',
+      roles: ['ADMIN'],
+    },
   ];
 
   /** Items the current user is allowed to see, recomputed when role changes. */
   readonly visibleItems = computed<NavItem[]>(() => {
     const role = this.auth.role();
     if (!role) return [];
-    return this.allItems.filter((item) => !item.roles || item.roles.includes(role));
+    return this.allItems.filter(
+      (item) => !item.roles || item.roles.includes(role),
+    );
   });
 }
