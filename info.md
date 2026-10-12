@@ -1,6 +1,6 @@
 # Merchant Portal Frontend — Technical Overview
 
-This document is the single source of truth for the codebase. Any AI or human reading it should be able to understand the architecture, conventions, and backend contract without opening a single source file.
+This document is the single source of truth for the frontend codebase. Any AI or human reading it should be able to understand the architecture, conventions, and backend contract without opening a single source file.
 
 ---
 
@@ -48,31 +48,38 @@ The frontend talks to a FastAPI backend. Summary below.
 
 ### Auth
 
-- `POST /auth/signup` → `{ access_token, refresh_token, user }`
-- `POST /auth/login` → `{ access_token, refresh_token, user }`
-- `POST /auth/refresh` → `{ access_token, refresh_token, user }`
-- `GET  /auth/me` → `User` (Bearer required)
+- `POST /auth/signup`      → `{ access_token, refresh_token, user }`
+- `POST /auth/login`       → `{ access_token, refresh_token, user }`
+- `POST /auth/refresh`     → `{ access_token, refresh_token, user }`
+- `GET  /auth/me`          → `User`                (Bearer required)
 
 Access tokens expire in 15 minutes. Refresh tokens expire in 7 days and are rotated on every use (single-use). Concurrent 401s must trigger exactly one refresh call; queued requests retry with the new token.
 
 ### Roles
 
 - **SALES** — creates and edits their own applications; sees only their own
-- **REVIEWER** — views all applications; records risk decisions
+- **REVIEWER** — views all applications; records review actions
 - **ADMIN** — full access
 
 ### Applications
 
-- `GET    /applications` (paginated, filter by status + search)
+- `GET    /applications`                (paginated, filter by status + search)
 - `GET    /applications/:id`
-- `POST   /applications` (SALES/ADMIN)
-- `PATCH  /applications/:id` (SALES/ADMIN, DRAFT only)
-- `PATCH  /applications/:id/submit` (SALES/ADMIN, DRAFT → SUBMITTED)
+- `POST   /applications`                (SALES/ADMIN)
+- `PATCH  /applications/:id`            (SALES/ADMIN, DRAFT only)
+- `PATCH  /applications/:id/submit`     (SALES/ADMIN, DRAFT → SUBMITTED)
 
 ### Reviews
 
 - `GET  /applications/:id/reviews`
-- `POST /applications/:id/reviews` (REVIEWER/ADMIN)
+- `POST /applications/:id/reviews`      (REVIEWER/ADMIN)
+
+A review carries two independent fields:
+
+- `action` — `APPROVE` | `REJECT` | `UNDER_REVIEW`, which drives the resulting application status.
+- `decision` — `LOW` | `MEDIUM` | `HIGH` | `REJECTED`, the reviewer's independent risk assessment.
+
+Actions are only allowed on `SUBMITTED` or `UNDER_REVIEW` applications. Terminal states reject further reviews with 400.
 
 ### Pagination envelope
 
@@ -92,8 +99,23 @@ Query params: `page` (≥ 1, default 1), `limit` (1–100, default 10).
 ```
 ApplicationStatus: DRAFT | SUBMITTED | UNDER_REVIEW | APPROVED | REJECTED
 RiskDecision:      LOW | MEDIUM | HIGH | REJECTED
+ReviewAction:      APPROVE | REJECT | UNDER_REVIEW
 UserRole:          SALES | REVIEWER | ADMIN
 ```
+
+### Status transitions
+
+| From | Trigger | To |
+|---|---|---|
+| DRAFT | SALES submits via wizard | SUBMITTED |
+| SUBMITTED | REVIEWER action APPROVE | APPROVED |
+| SUBMITTED | REVIEWER action REJECT | REJECTED |
+| SUBMITTED | REVIEWER action UNDER_REVIEW | UNDER_REVIEW |
+| UNDER_REVIEW | REVIEWER action APPROVE | APPROVED |
+| UNDER_REVIEW | REVIEWER action REJECT | REJECTED |
+| UNDER_REVIEW | REVIEWER action UNDER_REVIEW | UNDER_REVIEW |
+
+Every status in the enum is reachable through user action — none are seed-only.
 
 ---
 
@@ -222,13 +244,13 @@ npm run test:watch # watch mode
 
 ### What is covered
 
-| Spec                                       | What it verifies                                                                                                                |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| `core/http/auth.interceptor.spec.ts`       | Bearer attachment, public-endpoint bypass, **single-flight refresh across 3 concurrent 401s**, session clear on refresh failure |
-| `core/auth/role.guard.spec.ts`             | Allows correct role, redirects wrong role to `/dashboard`, redirects unauthenticated to `/login` with `returnUrl`               |
-| `core/auth/guest.guard.spec.ts`            | Allows unauthenticated users, redirects authenticated users away from public routes                                             |
-| `shared/components/masked-field/*.spec.ts` | Masked by default, reveals on click, re-masks, hides toggle when `revealable=false`, `aria-pressed` reflects state              |
-| `shared/components/save-status/*.spec.ts`  | Correct label per status, `aria-live` region present                                                                            |
+| Spec | What it verifies |
+|---|---|
+| `core/http/auth.interceptor.spec.ts` | Bearer attachment, public-endpoint bypass, **single-flight refresh across 3 concurrent 401s**, session clear on refresh failure |
+| `core/auth/role.guard.spec.ts` | Allows correct role, redirects wrong role to `/dashboard`, redirects unauthenticated to `/login` with `returnUrl` |
+| `core/auth/guest.guard.spec.ts` | Allows unauthenticated users, redirects authenticated users away from public routes |
+| `shared/components/masked-field/*.spec.ts` | Masked by default, reveals on click, re-masks, hides toggle when `revealable=false`, `aria-pressed` reflects state |
+| `shared/components/save-status/*.spec.ts` | Correct label per status, `aria-live` region present |
 
 ### The single-flight refresh test
 
@@ -264,7 +286,7 @@ Each standalone component imports only the Material modules it needs:
 
 ```typescript
 import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
+import { MatIconModule }   from '@angular/material/icon';
 ```
 
 No shared Material barrel module. Tree-shaking stays clean and each component's dependencies are visible at the top of the file.
@@ -311,19 +333,9 @@ Public API consumed by the login/signup pages and the header. Provides `login()`
 
 ### AuthRefreshService (`core/auth/auth-refresh.service.ts`)
 
-The concurrent-401 coordinator. Uses `HttpBackend` directly (bypassing
-interceptors, so no recursion) to `POST /auth/refresh`. `HttpBackend`
-emits a stream of `HttpEvent`s (Sent, HeaderResponse, Response), so the
-pipeline uses `filter(event => event instanceof HttpResponse)` and
-`take(1)` to extract only the final response body — reading the stream
-with `map` would throw on the first intermediate event and silently drop
-the real response.
+The concurrent-401 coordinator. Uses `HttpBackend` directly (bypassing interceptors, so no recursion) to `POST /auth/refresh`. `HttpBackend` emits a stream of `HttpEvent`s (Sent, HeaderResponse, Response), so the pipeline uses `filter(event => event instanceof HttpResponse)` and `take(1)` to extract only the final response body — reading the stream with `map` would throw on the first intermediate event and silently drop the real response.
 
-Holds an `inFlight$` observable. The first 401 starts the refresh; every
-other 401 subscribes to the same observable via
-`shareReplay({ bufferSize: 1, refCount: false })`. `finalize` clears
-`inFlight$` so the NEXT 401 starts a fresh refresh. All failures are
-normalized to `HttpErrorResponse` before leaving the service.
+Holds an `inFlight$` observable. The first 401 starts the refresh; every other 401 subscribes to the same observable via `shareReplay({ bufferSize: 1, refCount: false })`. `finalize` clears `inFlight$` so the NEXT 401 starts a fresh refresh. All failures are normalized to `HttpErrorResponse` before leaving the service.
 
 ### authInterceptor (`core/http/auth.interceptor.ts`)
 
@@ -339,7 +351,17 @@ Public endpoints (`/auth/login`, `/auth/signup`, `/auth/refresh`) bypass both th
 
 ### errorInterceptor (`core/http/error.interceptor.ts`)
 
-Runs late in the response chain (registered first) so recoverable 401s never reach the log. Currently a `console.error` logger; the extension point for a future snackbar-based toast service.
+Runs first in the interceptor chain so it wraps `authInterceptor` on the response side. Normalizes any thrown error into an `HttpErrorResponse` (using `instanceof` first, then duck-typing, then a fallback wrapper) and surfaces a toast through `NotificationService`.
+
+Toast policy, exhaustively:
+
+- 401 on `/auth/login` or `/auth/signup` → **"Invalid email or password."**
+- 401 elsewhere → suppressed (session-expiry redirect owns the UX)
+- 400/422 with FastAPI detail → parsed field message
+- 403 / 404 / 409 / 429 → status-specific messages
+- 5xx → "Server error. Please try again shortly."
+- status 0 (network) → "Cannot reach the server."
+- request cancelled by navigation → suppressed
 
 ### Guards
 
@@ -351,9 +373,46 @@ Runs late in the response chain (registered first) so recoverable 401s never rea
 
 Angular's built-in `Validators.email` accepts `user@host`, which the backend's Pydantic `EmailStr` rejects. A custom `strictEmail` validator in `shared/validators/` enforces the same rules client-side so validation errors surface before a network round-trip. Backend validation errors are parsed by `core/http/api-error.ts`, which understands both FastAPI's simple `{ detail: "..." }` shape and its structured validation array shape.
 
+### NotificationService (`shared/services/notification.service.ts`)
+
+Thin wrapper around `MatSnackBar` exposing `error()`, `info()`, and `success()`. `errorInterceptor` calls `notify.error()` before re-throwing, so users see a toast for real failures while component-level error handlers continue to run. Toasts are suppressed for auth endpoints (inline on the auth forms), for 401s (redirect handled by `authInterceptor`), and for client-side cancellations.
+
 ---
 
-## 11. File Index
+## 11. Application Detail — Reviewer Workflow
+
+The detail component (`features/applications/detail/`) is the primary surface for the review workflow.
+
+### Layout
+
+- **Header** — back button, merchant name, status badge, created date.
+- **Merchant details** — name, business type, revenue, submitted date, current risk level.
+- **Contact details** — email and phone, masked by default with per-field reveal.
+- **Decision history** — chronological list of reviews showing action, risk level, comment, timestamp.
+- **Reviewer panel** — only for REVIEWER/ADMIN, only when status is `SUBMITTED` or `UNDER_REVIEW`. Two dropdowns (**Action** and **Risk level**) plus an optional comment.
+- **Terminal notice** — replaces the reviewer panel for `APPROVED` and `REJECTED` applications, explaining that no further action is possible.
+
+### Fetch pipeline
+
+```
+combineLatest([id$, reload$])
+  -> switchMap(forkJoin([application$, reviews$]))
+  -> ViewState (loading | success | error)
+  -> toSignal
+```
+
+A `reload` signal is bumped after a successful review submission to refetch both the application (status changed) and its reviews (new entry) in one shot.
+
+### Submit flow
+
+1. Validate the form.
+2. POST to `/applications/:id/reviews` with `{ action, decision, comment }`.
+3. On success: reset the form and bump `reload`.
+4. On error: display an inline alert with the parsed backend message.
+
+---
+
+## 12. File Index
 
 ### Root
 
@@ -395,6 +454,7 @@ Angular's built-in `Validators.email` accepts `user@host`, which the backend's P
 
 - `shared/directives/has-role.directive.ts`
 - `shared/validators/strict-email.validator.ts`
+- `shared/services/notification.service.ts`
 - `shared/components/status-badge/status-badge.component.ts`
 - `shared/components/masked-field/masked-field.component.ts` + `.spec.ts`
 - `shared/components/save-status/save-status.component.ts` + `.spec.ts`
@@ -420,15 +480,15 @@ Angular's built-in `Validators.email` accepts `user@host`, which the backend's P
 
 ---
 
-## 12. Roadmap
+## 13. Roadmap
 
 Ordered by impact for a production release.
 
 1. **Move refresh token to HttpOnly cookie** — backend change plus a small update to `TokenStorageService`. Keep the access token in memory only.
 2. **Serve a strict CSP** — reverse proxy or backend response header. The policy in section 6 is compatible with this codebase.
-3. **Toast / snackbar notifications** — replace the `console.error` in `errorInterceptor` with a Material snackbar service.
-4. **Server-driven revoke on logout** — a `POST /auth/logout` that invalidates the refresh token family.
+3. **Server-driven revoke on logout** — a `POST /auth/logout` that invalidates the refresh token family on the backend.
+4. **Real-time status updates** — WebSocket or SSE channel for application status changes; the dashboard could subscribe and patch its list signal.
 5. **Dark mode** — Material's M3 API supports it; the theme in `styles.scss` just needs a dark token block and a UI toggle.
-6. **Real-time status updates** — WebSocket or SSE channel for application status changes; the dashboard could subscribe and patch its list signal.
-7. **Export to CSV** — dashboard list export, straightforward with the existing pagination envelope.
-8. **i18n** — Angular's built-in `@angular/localize` with a language switcher in the header.
+6. **Export to CSV** — dashboard list export, straightforward with the existing pagination envelope.
+7. **i18n** — Angular's built-in `@angular/localize` with a language switcher in the header.
+8. **Reconnect the notification service to a proper backend logout** — replace the current client-only logout with a server-side revoke call.
