@@ -6,23 +6,25 @@ This document is the single source of truth for the frontend codebase. Any AI or
 
 ## 1. Purpose
 
-A merchant payments portal frontend built with Angular 20. Supports three user roles (SALES, REVIEWER, ADMIN) across a multi-step merchant application wizard, a review workflow, and a paginated dashboard.
+An Angular 20 frontend for a merchant payments portal. Three roles (SALES, REVIEWER, ADMIN) across:
+- a multi-step merchant application wizard (create + edit) with autosave
+- a paginated dashboard with server-side filtering
+- a review workflow with assignment and reviewer decisions
+- an admin user management page
 
 ---
 
 ## 2. Demo notice
 
-This is a **demonstration build**, not a hardened production deployment. Several security mechanisms that a production release would require have been deliberately simplified so the app can run without a backend that owns HttpOnly cookies, CSRF tokens, or a CSP delivery pipeline.
+This is a **demonstration build**. Mechanisms a production release would require are deliberately simplified:
 
-**Not implemented in this demo:**
+- **Tokens stored in `localStorage`.** Production moves the refresh token to an HttpOnly cookie and keeps the access token in memory only.
+- **No CSRF protection.** Bearer tokens are inherently CSRF-resistant, but once the refresh token moves to a cookie a synchronizer-token pattern must be added.
+- **No CSP is served.** The policy documented in §6 is what production should apply at the reverse proxy.
+- **No rate limiting** on auth endpoints.
+- **No server-side token revocation on logout** beyond deleting the refresh token locally.
 
-- Tokens are stored in `localStorage`, not in `HttpOnly`, `Secure`, `SameSite=Strict` cookies. An attacker who achieves XSS could read them. In production, the refresh token belongs in an HttpOnly cookie, and the access token should live in memory only.
-- No CSRF protection. The current auth scheme is bearer-token based, which is inherently CSRF-resistant, but once the refresh token moves to a cookie, a double-submit or synchronizer-token pattern must be added.
-- No Content Security Policy is served. The CSP that should be enforced in production is documented in section 6 so it can be applied at the reverse proxy or via the backend's response headers.
-- No rate limiting, brute-force protection, or account lockout on the auth endpoints. Those belong at the API gateway or backend.
-- No token revocation on logout server-side beyond deleting the refresh token from the local session. A production logout should invalidate the token family on the backend.
-
-Everything else — routing, guards, form validation, RBAC enforcement, data flow, and test coverage — is implemented to production standards.
+Everything else — routing, guards, form validation, RBAC enforcement, data flow, and test coverage — is production-grade.
 
 ---
 
@@ -31,59 +33,62 @@ Everything else — routing, guards, form validation, RBAC enforcement, data flo
 - Angular 20, standalone components, zoneless change detection
 - Signals + computed + effect for state; RxJS for streams
 - Reactive Forms (typed, with custom validators)
-- Angular Material for UI components (toolbar, sidenav, buttons, icons, menus, form fields, tables, dialogs, snackbars, chips)
-- Tailwind CSS v4 for layout utilities (config via `@theme` in `styles.scss`; no `tailwind.config.js`)
-- SCSS only for global theme tokens and Material theming
+- Angular Material for UI components
+- Tailwind CSS v4 for layout utilities (`@theme` in `styles.scss`, no config file)
+- SCSS for global tokens and Material theming only
 - Vitest + Angular TestBed for unit tests
 - TypeScript strict mode
-- Path aliases (`@core/*`, `@shared/*`, `@features/*`, `@layout/*`, `@env/*`) declared in `tsconfig.json` and mirrored in `vitest.config.ts`
+- Path aliases: `@core/*`, `@shared/*`, `@features/*`, `@layout/*`, `@env/*` (in `tsconfig.json` and mirrored in `vitest.config.ts`)
 
 ---
 
 ## 4. Backend Contract
 
-The frontend talks to a FastAPI backend. Summary below.
-
 **Base URL:** `http://localhost:3000/api` (set in `src/environments/environment.ts`)
 
 ### Auth
 
-- `POST /auth/signup`      → `{ access_token, refresh_token, user }`
-- `POST /auth/login`       → `{ access_token, refresh_token, user }`
-- `POST /auth/refresh`     → `{ access_token, refresh_token, user }`
-- `GET  /auth/me`          → `User`                (Bearer required)
+- `POST /auth/signup` → `{ access_token, refresh_token, user }`
+- `POST /auth/login` → `{ access_token, refresh_token, user }`
+- `POST /auth/refresh` → `{ access_token, refresh_token, user }`
+- `GET  /auth/me` → `User`
 
-Access tokens expire in 15 minutes. Refresh tokens expire in 7 days and are rotated on every use (single-use). Concurrent 401s must trigger exactly one refresh call; queued requests retry with the new token.
+Access tokens expire in 15 min. Refresh tokens expire in 7 days and rotate on every use. Concurrent 401s trigger **exactly one** refresh; queued requests retry with the new token.
 
 ### Roles
 
-- **SALES** — creates and edits their own applications; sees only their own
-- **REVIEWER** — views all applications; records review actions
-- **ADMIN** — full access
+- **SALES** — creates and edits their own applications; sees only their own.
+- **REVIEWER** — sees only applications **assigned to them**; records decisions.
+- **ADMIN** — sees everything, assigns reviewers, deletes applications, manages users.
 
 ### Applications
 
-- `GET    /applications`                (paginated, filter by status + search)
+- `GET    /applications` — paginated; role-scoped
 - `GET    /applications/:id`
-- `POST   /applications`                (SALES/ADMIN)
-- `PATCH  /applications/:id`            (SALES/ADMIN, DRAFT only)
-- `PATCH  /applications/:id/submit`     (SALES/ADMIN, DRAFT → SUBMITTED)
+- `POST   /applications` — SALES, ADMIN
+- `PATCH  /applications/:id` — SALES, ADMIN (DRAFT only for SALES)
+- `PATCH  /applications/:id/submit` — SALES, ADMIN
+- `PATCH  /applications/:id/assign` — ADMIN (body: `{ reviewer_id: string | null }`)
+- `DELETE /applications/:id` — ADMIN
+
+Responses embed `sales_rep` and `assigned_reviewer` as compact `UserSummary` objects.
 
 ### Reviews
 
 - `GET  /applications/:id/reviews`
-- `POST /applications/:id/reviews`      (REVIEWER/ADMIN)
+- `POST /applications/:id/reviews` — REVIEWER (assigned only), ADMIN
 
-A review carries two independent fields:
+A review carries two fields:
+- **`action`** — `APPROVE` | `REJECT` | `UNDER_REVIEW`, which drives the resulting status.
+- **`decision`** — `LOW` | `MEDIUM` | `HIGH` | `REJECTED`, the risk assessment.
 
-- `action` — `APPROVE` | `REJECT` | `UNDER_REVIEW`, which drives the resulting application status.
-- `decision` — `LOW` | `MEDIUM` | `HIGH` | `REJECTED`, the reviewer's independent risk assessment.
+### Users (ADMIN only)
 
-Actions are only allowed on `SUBMITTED` or `UNDER_REVIEW` applications. Terminal states reject further reviews with 400.
+- `GET    /users` — paginated, filter by `role`
+- `PATCH  /users/:id/role` — change another user's role
+- `DELETE /users/:id` — delete another user (guarded)
 
 ### Pagination envelope
-
-All list endpoints return:
 
 ```json
 {
@@ -107,15 +112,15 @@ UserRole:          SALES | REVIEWER | ADMIN
 
 | From | Trigger | To |
 |---|---|---|
-| DRAFT | SALES submits via wizard | SUBMITTED |
-| SUBMITTED | REVIEWER action APPROVE | APPROVED |
-| SUBMITTED | REVIEWER action REJECT | REJECTED |
-| SUBMITTED | REVIEWER action UNDER_REVIEW | UNDER_REVIEW |
-| UNDER_REVIEW | REVIEWER action APPROVE | APPROVED |
-| UNDER_REVIEW | REVIEWER action REJECT | REJECTED |
-| UNDER_REVIEW | REVIEWER action UNDER_REVIEW | UNDER_REVIEW |
+| DRAFT | SALES submits | SUBMITTED |
+| SUBMITTED | Action APPROVE | APPROVED |
+| SUBMITTED | Action REJECT | REJECTED |
+| SUBMITTED | Action UNDER_REVIEW | UNDER_REVIEW |
+| UNDER_REVIEW | Action APPROVE | APPROVED |
+| UNDER_REVIEW | Action REJECT | REJECTED |
+| UNDER_REVIEW | Action UNDER_REVIEW | UNDER_REVIEW |
 
-Every status in the enum is reachable through user action — none are seed-only.
+Every status is reachable through user action. None are seed-only.
 
 ---
 
@@ -127,13 +132,19 @@ Every status in the enum is reachable through user action — none are seed-only
 src/
   environments/            API base URL config
   app/
-    app.ts                 root component (router-outlet only)
+    app.ts                 root component
     app.config.ts          providers: router, http, interceptors, animations
     app.routes.ts          top-level routes (lazy-loaded features)
     core/                  singletons: auth, http, api clients, models
-    shared/                reusable UI: components, directives, pipes, validators
+    shared/                reusable UI: components, directives, validators
     layout/                app shell: header, nav, shell
     features/              lazy-loaded feature areas
+      admin/users/           user management (ADMIN)
+      applications/
+        wizard/              multi-step create + edit
+        detail/              sectioned view, assignment, reviewer panel
+      auth/                  login, signup
+      dashboard/             paginated list
 ```
 
 ### Layer responsibilities
@@ -143,36 +154,15 @@ src/
 - **layout/** — The persistent shell around routed views.
 - **features/** — One folder per user-facing area. Each has its own routes file.
 
-### Data flow (read)
-
-```
-HTTP response (RxJS stream)
-  -> toSignal() or resource()
-  -> signal consumed by template
-  -> template renders via @if / @for
-```
-
-### Data flow (write)
-
-```
-Form value
-  -> debounced stream (autosave) or explicit submit
-  -> API client
-  -> HttpClient
-  -> interceptor adds Bearer token
-  -> response updates a signal / store
-```
-
 ### Declarative conventions
 
-- Signals for state: `signal()`, `computed()`, `effect()`, `linkedSignal()`
+- Signals for state: `signal()`, `computed()`, `effect()`
 - RxJS only where streams earn their place: HTTP, debounce, pagination
-- No manual subscriptions in components; use `toSignal()` or the `async` pipe
-- Functional guards (`CanActivateFn`), functional resolvers, functional interceptors
-- `input()`, `output()`, `model()` for component I/O — no `@Input`/`@Output` decorators
+- No manual subscriptions; use `toSignal()` or the `async` pipe
+- Functional guards and interceptors
+- `input()`, `output()`, `model()` for component I/O
 - `inject()` in field initializers — no constructor injection
 - `@if` / `@for` / `@switch` in templates — no `*ngIf` / `*ngFor`
-- No imperative `ngOnInit` glue where a signal or `resource()` can express the same intent
 
 ---
 
@@ -180,30 +170,31 @@ Form value
 
 ### Token storage (demo limitation)
 
-Tokens are stored in `localStorage` under a single key (`mp.session`). This is the pragmatic choice for a self-contained demo where the backend does not yet issue HttpOnly cookies. In production:
+Tokens are stored in `localStorage` under `mp.session`. This is documented as a demo simplification. In production:
 
-- The refresh token belongs in an `HttpOnly`, `Secure`, `SameSite=Strict` cookie set by the backend, with a short expiry and rotation on use.
-- The access token belongs in memory only (a signal, not storage), with a silent refresh on page load driven by the cookie.
-- The backend should revoke the entire token family on logout.
+- Refresh token → `HttpOnly`, `Secure`, `SameSite=Strict` cookie
+- Access token → in memory only (signal)
+- Silent refresh on page load driven by the cookie
+- Backend revokes the token family on logout
 
-The rest of the auth pipeline is already designed to support this migration — only `TokenStorageService` would change.
+Only `TokenStorageService` needs to change to support the migration.
 
 ### Role gating
 
 Two layers:
 
-1. **UI gating** — the `*appHasRole` structural directive hides elements.
-2. **Route gating** — functional `roleGuard('REVIEWER', 'ADMIN')` on routes, plus `authGuard` on the shell and `guestGuard` on public routes.
+1. **UI gating** — `*appHasRole` structural directive hides elements.
+2. **Route gating** — `roleGuard(...)` on routes, `authGuard` on the shell, `guestGuard` on public routes.
 
-Both are UX only. The backend enforces authorization on every request. A user who tampers with `localStorage` sees the wrong UI but cannot perform any action the backend rejects.
+Both are UX only. The backend enforces the same rules on every request. Tampering with `localStorage` produces the wrong UI but no unauthorized action.
 
 ### Sensitive field masking
 
-The `MaskedFieldComponent` masks values by default. Reveal requires clicking a button; the reveal is not persisted. Roles with permission see masked values and can reveal individually. Reveal state is per-instance, so navigating away or refreshing re-masks everything.
+`MaskedFieldComponent` masks values by default. Reveal is per-instance and not persisted; refresh re-masks.
 
 ### Content Security Policy
 
-The production build should ship with a CSP header. This app is compatible with:
+Production should serve:
 
 ```
 default-src 'self';
@@ -216,7 +207,7 @@ base-uri 'self';
 form-action 'self';
 ```
 
-`style-src 'unsafe-inline'` is required because Tailwind injects style tags in dev. In production with a compiled stylesheet this can be tightened to `style-src 'self'`.
+`unsafe-inline` for styles is required in dev because Tailwind injects `<style>` tags; production can tighten to `'self'`.
 
 ---
 
@@ -227,15 +218,15 @@ npm install
 npm start        # dev server on http://localhost:4200
 ```
 
-The backend must be running at `http://localhost:3000/api` before the frontend will function.
+The backend must be running at `http://localhost:3000/api`.
 
-User accounts are created via the signup page or the backend's user provisioning mechanism. Roles are assigned at signup time.
+User accounts are created via the signup page or the backend's seed. Roles are assigned at signup time.
 
 ---
 
 ## 8. Testing
 
-Vitest + Angular TestBed. Spec files sit beside the code they test.
+Vitest + Angular TestBed.
 
 ```bash
 npm test           # single run
@@ -246,169 +237,199 @@ npm run test:watch # watch mode
 
 | Spec | What it verifies |
 |---|---|
-| `core/http/auth.interceptor.spec.ts` | Bearer attachment, public-endpoint bypass, **single-flight refresh across 3 concurrent 401s**, session clear on refresh failure |
-| `core/auth/role.guard.spec.ts` | Allows correct role, redirects wrong role to `/dashboard`, redirects unauthenticated to `/login` with `returnUrl` |
-| `core/auth/guest.guard.spec.ts` | Allows unauthenticated users, redirects authenticated users away from public routes |
-| `shared/components/masked-field/*.spec.ts` | Masked by default, reveals on click, re-masks, hides toggle when `revealable=false`, `aria-pressed` reflects state |
-| `shared/components/save-status/*.spec.ts` | Correct label per status, `aria-live` region present |
+| `core/http/auth.interceptor.spec.ts` | Bearer attachment, public-endpoint bypass, single-flight refresh across 3 concurrent 401s, session clear on refresh failure |
+| `core/auth/role.guard.spec.ts` | Allows correct role, redirects wrong role, redirects unauthenticated with returnUrl |
+| `core/auth/guest.guard.spec.ts` | Allows unauthenticated, redirects authenticated away from public routes |
+| `shared/components/masked-field/*.spec.ts` | Masked by default, reveals on click, re-masks, hides toggle when `revealable=false`, aria-pressed state |
+| `shared/components/save-status/*.spec.ts` | Correct label per status, aria-live region |
 
 ### The single-flight refresh test
 
-The highest-value test in the suite. It fires 3 concurrent GET requests, mocks all three returning 401, and asserts:
-
-1. Exactly **one** `POST /auth/refresh` fires.
-2. All three original requests are retried with the new access token.
-3. All three promises resolve after the retry succeeds.
+Fires 3 concurrent GET requests, mocks all three returning 401, asserts exactly one `POST /auth/refresh`, all three retries carry the new token, all three promises resolve.
 
 ### Setup notes
 
 - Config: `vitest.config.ts` (uses `@analogjs/vite-plugin-angular`).
 - Bootstrap: `src/test-setup.ts`.
-- Tests run in **jsdom** — no browser installation required.
+- Tests run in **jsdom**.
 - Specs use `provideZonelessChangeDetection()` to match the runtime.
 
 ---
 
-## 9. UI Layer — Angular Material + Tailwind
+## 9. UI Layer — Material + Tailwind
 
-We use both, on purpose.
+- **Angular Material** — toolbar, sidenav, buttons, icons, menus, form fields, tables, dialogs, snackbars, autocomplete, chips. Accessibility (focus management, ARIA, keyboard nav) is handled by Material.
+- **Tailwind CSS** — layout only: flex, grid, spacing, responsive breakpoints, design tokens.
 
-- **Angular Material** — components: toolbar, sidenav, buttons, icons, menus, form fields, tables, dialogs, snackbars, chips. Ships accessibility (focus management, ARIA, keyboard nav) out of the box.
-- **Tailwind CSS** — layout utilities only: flex, grid, spacing, responsive breakpoints, and the occasional design token (`bg-surface-50`). No Tailwind component kits; Material is the component layer.
+The theme is defined once in `styles.scss` via Material's M3 API (Azure primary, density `-1`).
 
-The theme is defined once in `styles.scss` using Material's M3 API with the Azure primary palette and density `-1` (tighter spacing for data-dense tables).
-
-**Rule of thumb:** components = Material, layout = Tailwind. Never reach for a Tailwind button class when a Material button exists; never reach for a Material layout primitive when a Tailwind flex will do.
-
-### Material imports pattern
-
-Each standalone component imports only the Material modules it needs:
-
-```typescript
-import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule }   from '@angular/material/icon';
-```
-
-No shared Material barrel module. Tree-shaking stays clean and each component's dependencies are visible at the top of the file.
+**Rule of thumb:** components = Material, layout = Tailwind.
 
 ### Layout shell
 
-The persistent shell (`src/app/layout/shell`) hosts:
-
-- `app-header` — `mat-toolbar` with user menu and a hamburger toggle
+- `app-header` — `mat-toolbar` with user menu and hamburger toggle
 - `app-nav` — `mat-sidenav` with role-filtered links
-- `<router-outlet>` — the routed feature content
+- `<router-outlet>` — routed feature content
 
-On desktop the sidenav is always visible; on mobile it overlays and closes when a link is tapped.
+Sidebar is persistent above the `md:` breakpoint, overlays below it.
 
 ### Permission-aware UI
 
-Two mechanisms:
+- `*appHasRole="['SALES','ADMIN']"` — structural directive that renders its host only when the user's role is in the list.
+- `roleGuard('SALES','ADMIN')` — functional route guard; wrong role → `/dashboard`.
 
-1. `*appHasRole="['SALES','ADMIN']"` — a structural directive that renders its host only when the current user's role is in the list.
-2. `roleGuard('SALES','ADMIN')` — functional route guard that redirects authenticated users with the wrong role to `/dashboard`.
-
-Both are UX only. The backend enforces authorization server-side on every request.
+Both UX only. Backend enforces.
 
 ### Responsive design
 
-- Single-column on mobile, multi-column at `sm:` and `md:` breakpoints.
-- Sidenav overlays below `md:` and is persistent above it.
-- Tables collapse into cards on narrow viewports.
-- All interactive elements are keyboard-accessible; Material components provide correct ARIA attributes out of the box.
+- Single-column on mobile, multi-column at `sm:` and `md:`.
+- Sidenav overlays below `md:`.
+- Tables drop columns on narrow viewports rather than scrolling.
+- All interactive elements keyboard-accessible.
 
 ---
 
 ## 10. Auth Pipeline
 
-The auth flow splits into four cooperating pieces plus three guards.
-
 ### TokenStorageService (`core/auth/token-storage.service.ts`)
 
-HTTP-free. Owns the `localStorage` persistence and exposes the session as signals: `accessToken`, `refreshToken`, `user`, `isAuthenticated`. The distinction matters because the interceptor depends on this service, and if it depended on `AuthService` (which uses `HttpClient`) we would get a circular dependency.
+HTTP-free. Owns `localStorage` persistence and exposes session signals: `accessToken`, `refreshToken`, `user`, `isAuthenticated`. Separated from `AuthService` so the interceptor can depend on it without creating a cycle.
 
 ### AuthService (`core/auth/auth.service.ts`)
 
-Public API consumed by the login/signup pages and the header. Provides `login()`, `signup()`, `logout()`, `me()`, and the signals `user`, `role`, `isAuthenticated`. Delegates persistence to `TokenStorageService`.
+Public API for login/signup/logout/me. Exposes `user`, `role`, `isAuthenticated` signals. Delegates persistence to `TokenStorageService`.
 
 ### AuthRefreshService (`core/auth/auth-refresh.service.ts`)
 
-The concurrent-401 coordinator. Uses `HttpBackend` directly (bypassing interceptors, so no recursion) to `POST /auth/refresh`. `HttpBackend` emits a stream of `HttpEvent`s (Sent, HeaderResponse, Response), so the pipeline uses `filter(event => event instanceof HttpResponse)` and `take(1)` to extract only the final response body — reading the stream with `map` would throw on the first intermediate event and silently drop the real response.
+Concurrent-401 coordinator. Uses `HttpBackend` directly (bypassing interceptors, so no recursion) to `POST /auth/refresh`. `HttpBackend` emits a stream of `HttpEvent`s; the pipeline uses `filter(event => event instanceof HttpResponse)` and `take(1)` to extract only the final body.
 
-Holds an `inFlight$` observable. The first 401 starts the refresh; every other 401 subscribes to the same observable via `shareReplay({ bufferSize: 1, refCount: false })`. `finalize` clears `inFlight$` so the NEXT 401 starts a fresh refresh. All failures are normalized to `HttpErrorResponse` before leaving the service.
+Holds an `inFlight$` observable. The first 401 starts the refresh; every other 401 subscribes to the same observable via `shareReplay({ bufferSize: 1, refCount: false })`. `finalize` clears the cache so the next 401 starts a fresh refresh. All failures are normalized to `HttpErrorResponse`.
 
 ### authInterceptor (`core/http/auth.interceptor.ts`)
 
-Functional interceptor. On every non-public request:
+On every non-public request:
 
 1. Attach `Authorization: Bearer <access>` if a token exists.
-2. Pass through.
-3. On 401: call `AuthRefreshService.refresh()`.
-4. On refresh success: retry the original request with the new token.
-5. On refresh failure: clear the session and navigate to `/login` with `?reason=session-expired`.
+2. On 401: call `AuthRefreshService.refresh()`.
+3. On success: retry the original request with the new token.
+4. On failure: clear session, navigate to `/login?reason=session-expired`.
 
-Public endpoints (`/auth/login`, `/auth/signup`, `/auth/refresh`) bypass both the token attachment and the refresh retry.
+Public endpoints (`/auth/login`, `/auth/signup`, `/auth/refresh`) bypass both token attachment and refresh retry.
 
 ### errorInterceptor (`core/http/error.interceptor.ts`)
 
-Runs first in the interceptor chain so it wraps `authInterceptor` on the response side. Normalizes any thrown error into an `HttpErrorResponse` (using `instanceof` first, then duck-typing, then a fallback wrapper) and surfaces a toast through `NotificationService`.
+Runs first in the chain so it wraps `authInterceptor` on the response side. Normalizes any thrown error into an `HttpErrorResponse` (via `instanceof`, duck-typing, then a fallback wrapper) and surfaces a toast through `NotificationService`.
 
-Toast policy, exhaustively:
+Toast policy:
 
-- 401 on `/auth/login` or `/auth/signup` → **"Invalid email or password."**
+- 401 on `/auth/login` or `/auth/signup` → "Invalid email or password."
 - 401 elsewhere → suppressed (session-expiry redirect owns the UX)
 - 400/422 with FastAPI detail → parsed field message
 - 403 / 404 / 409 / 429 → status-specific messages
 - 5xx → "Server error. Please try again shortly."
-- status 0 (network) → "Cannot reach the server."
-- request cancelled by navigation → suppressed
+- status 0 → "Cannot reach the server."
+- request cancelled → suppressed
 
 ### Guards
 
-- `authGuard` — allows access when a session exists, otherwise redirects to `/login` with `returnUrl`.
-- `roleGuard(...roles)` — factory producing a guard that allows only the listed roles. Unauthenticated → `/login`. Authenticated with wrong role → `/dashboard`.
-- `guestGuard` — redirects authenticated users away from `/login` and `/signup` to `/dashboard`. Keeps logged-in users from landing on public-only pages via stale bookmarks or manual URL entry.
+- `authGuard` — session required; else `/login` with `returnUrl`.
+- `roleGuard(...roles)` — unauthenticated → `/login`; wrong role → `/dashboard`.
+- `guestGuard` — authenticated users away from `/login` and `/signup`.
 
 ### Validation alignment
 
-Angular's built-in `Validators.email` accepts `user@host`, which the backend's Pydantic `EmailStr` rejects. A custom `strictEmail` validator in `shared/validators/` enforces the same rules client-side so validation errors surface before a network round-trip. Backend validation errors are parsed by `core/http/api-error.ts`, which understands both FastAPI's simple `{ detail: "..." }` shape and its structured validation array shape.
+`strictEmail` mirrors the backend's Pydantic `EmailStr` rules so invalid emails are caught before a 422. Backend validation errors are parsed by `core/http/api-error.ts` for both FastAPI's simple `{ detail: string }` and structured array shapes.
 
 ### NotificationService (`shared/services/notification.service.ts`)
 
-Thin wrapper around `MatSnackBar` exposing `error()`, `info()`, and `success()`. `errorInterceptor` calls `notify.error()` before re-throwing, so users see a toast for real failures while component-level error handlers continue to run. Toasts are suppressed for auth endpoints (inline on the auth forms), for 401s (redirect handled by `authInterceptor`), and for client-side cancellations.
+Thin wrapper around `MatSnackBar` exposing `error()`, `info()`, `success()`. `errorInterceptor` calls `notify.error()` before re-throwing; component-level handlers still run.
 
 ---
 
-## 11. Application Detail — Reviewer Workflow
+## 11. Feature Walkthroughs
 
-The detail component (`features/applications/detail/`) is the primary surface for the review workflow.
+### Dashboard (`features/dashboard/`)
 
-### Layout
-
-- **Header** — back button, merchant name, status badge, created date.
-- **Merchant details** — name, business type, revenue, submitted date, current risk level.
-- **Contact details** — email and phone, masked by default with per-field reveal.
-- **Decision history** — chronological list of reviews showing action, risk level, comment, timestamp.
-- **Reviewer panel** — only for REVIEWER/ADMIN, only when status is `SUBMITTED` or `UNDER_REVIEW`. Two dropdowns (**Action** and **Risk level**) plus an optional comment.
-- **Terminal notice** — replaces the reviewer panel for `APPROVED` and `REJECTED` applications, explaining that no further action is possible.
-
-### Fetch pipeline
+**Fetch pipeline:**
 
 ```
-combineLatest([id$, reload$])
-  -> switchMap(forkJoin([application$, reviews$]))
-  -> ViewState (loading | success | error)
-  -> toSignal
+combineLatest([
+  pageIndex$, pageSize$, statusFilter$, debouncedSearch$, reload$
+])
+  → switchMap(api.list)
+  → ViewState (loading | success | error)
+  → toSignal
 ```
 
-A `reload` signal is bumped after a successful review submission to refetch both the application (status changed) and its reviews (new entry) in one shot.
+**Columns:** merchant name, contact email, created by, assigned to, status badge, updated date. Columns are hidden on narrow viewports via Tailwind breakpoints.
 
-### Submit flow
+**Role-aware:**
 
-1. Validate the form.
-2. POST to `/applications/:id/reviews` with `{ action, decision, comment }`.
-3. On success: reset the form and bump `reload`.
-4. On error: display an inline alert with the parsed backend message.
+- SALES sees only their own; the "New application" button is visible.
+- REVIEWER sees only assigned; the "New application" button is hidden.
+- ADMIN sees all; row actions include edit (DRAFT only) and delete.
+
+**Actions:**
+
+- Edit (pencil) — visible for DRAFT rows the current user can edit.
+- Delete — ADMIN only; inline confirmation, then calls `DELETE /applications/:id`.
+
+**States:** loading bar, inline error alert with Retry button, empty state with role-appropriate copy.
+
+### Wizard (`features/applications/wizard/`)
+
+**Two modes:**
+
+- Create: route `/applications/new`. No `id` input. First valid save POSTs; subsequent saves PATCH.
+- Edit: route `/applications/:id/edit`. The route param arrives as the `id` input (via `withComponentInputBinding`). The existing DRAFT is loaded with `emitEvent: false` so the load doesn't trigger a save. Every change autosaves via PATCH.
+
+**Structure:** two typed sub-groups (`merchant`, `contact`) bound to `mat-step`s via `[stepControl]`, so per-step validation gates navigation.
+
+**Autosave:**
+
+```
+form.valueChanges
+  → debounceTime(1200)
+  → filter(valid)
+  → distinctUntilChanged(deepEqual)
+  → tap(set 'saving')
+  → switchMap(create | update)
+  → tap(set 'saved')
+  → catchError → set 'error', return EMPTY
+```
+
+On error the form is left untouched; the next keystroke retries.
+
+**Submit:** PATCHes the final value (or POSTs on first save), then calls `/submit`, then navigates to the detail page.
+
+### Detail (`features/applications/detail/`)
+
+Sectioned layout:
+
+- **Assignment** — ADMIN only. Autocomplete over REVIEWER users, backed by `UsersApi.list({ role: 'REVIEWER' })`. Assign or unassign. Disabled for DRAFT applications.
+- **Merchant details** — name, business type, revenue, created by, submitted date, assigned reviewer, current risk level.
+- **Contact details** — email and phone, masked with per-field reveal.
+- **Decision history** — chronological list showing action, risk level, comment, timestamp.
+- **Review panel** — REVIEWER/ADMIN only, only when status is SUBMITTED or UNDER_REVIEW. Two dropdowns (**Action**, **Risk level**) and a comment field.
+  - REVIEWER sees the form only when the application is assigned to them; otherwise an informational card explains why.
+  - ADMIN sees the form on any actionable application.
+- **Terminal notice** — replaces the review panel for APPROVED/REJECTED.
+- **Delete** — ADMIN only, inline confirmation.
+
+**Fetch:** `combineLatest([id$, reload$]) → switchMap(forkJoin([application$, reviews$]))`. After a review or assignment, `reload` is bumped to refetch both.
+
+### Users (`features/admin/users/`)
+
+ADMIN only.
+
+- Paginated list of users with role dropdown and delete button.
+- Role dropdown: Material `mat-select` bound via `[value]`/`(valueChange)`. Disabled on the current user's own row.
+- Delete: inline confirm. Disabled on own row.
+- Backend guards (self-action, last-admin, owning-resources) surface as inline red alerts.
+
+### Auth (`features/auth/login`, `features/auth/signup`)
+
+Reactive Forms with Material fields. Login supports `returnUrl` redirect. Signup has a role selector. Password reveal toggles with `aria-pressed`. Both use `strictEmail`.
 
 ---
 
@@ -416,13 +437,10 @@ A `reload` signal is bumped after a successful review submission to refetch both
 
 ### Root
 
-- `info.md` — this file
-- `README.md` — quick-start commands
-- `package.json`, `angular.json`, `tsconfig.json`, `tsconfig.app.json`, `tsconfig.spec.json`, `.postcssrc.json`
+- `info.md`, `README.md`
+- `package.json`, `angular.json`, `tsconfig*.json`, `.postcssrc.json`
 - `vitest.config.ts`
-- `src/styles.scss` — Material theme + Tailwind tokens + base layer
-- `src/index.html` — Material Icons + Roboto font links
-- `src/test-setup.ts` — Vitest + TestBed bootstrap
+- `src/styles.scss`, `src/index.html`, `src/test-setup.ts`
 
 ### Environments
 
@@ -441,54 +459,58 @@ A `reload` signal is bumped after a successful review submission to refetch both
 - `core/auth/auth.service.ts`
 - `core/auth/auth-refresh.service.ts`
 - `core/auth/auth.guard.ts`
-- `core/auth/guest.guard.ts` + `guest.guard.spec.ts`
-- `core/auth/role.guard.ts` + `role.guard.spec.ts`
+- `core/auth/guest.guard.ts` + spec
+- `core/auth/role.guard.ts` + spec
 
 ### Core — HTTP
 
-- `core/http/auth.interceptor.ts` + `auth.interceptor.spec.ts`
+- `core/http/auth.interceptor.ts` + spec
 - `core/http/error.interceptor.ts`
-- `core/http/api-error.ts` — FastAPI error parser
+- `core/http/api-error.ts`
+
+### Core — API clients
+
+- `core/api/applications.api.ts`
+- `core/api/users.api.ts`
 
 ### Shared
 
 - `shared/directives/has-role.directive.ts`
 - `shared/validators/strict-email.validator.ts`
 - `shared/services/notification.service.ts`
-- `shared/components/status-badge/status-badge.component.ts`
-- `shared/components/masked-field/masked-field.component.ts` + `.spec.ts`
-- `shared/components/save-status/save-status.component.ts` + `.spec.ts`
+- `shared/components/status-badge/*`
+- `shared/components/masked-field/*` + spec
+- `shared/components/save-status/*` + spec
 
 ### Layout
 
-- `layout/shell/shell.component.ts` + `.html`
-- `layout/header/header.component.ts` + `.html`
-- `layout/nav/nav.component.ts` + `.html`
+- `layout/shell/*`
+- `layout/header/*`
+- `layout/nav/*`
 
 ### Features
 
-- `features/auth/login/login.component.ts` + `.html`
-- `features/auth/signup/signup.component.ts` + `.html`
-- `features/dashboard/dashboard.component.ts` + `.html`
-- `features/applications/wizard/wizard.component.ts` + `.html`
-- `features/applications/detail/detail.component.ts` + `.html`
-- `features/not-found/not-found.component.ts`
+- `features/auth/login/*`
+- `features/auth/signup/*`
+- `features/dashboard/*`
+- `features/applications/wizard/*`
+- `features/applications/detail/*`
+- `features/admin/users/*`
+- `features/not-found/*`
 
 ### Routes
 
-- `app.routes.ts` — public auth routes (`guestGuard`) + guarded shell with lazy-loaded children; `roleGuard('SALES','ADMIN')` on the wizard route.
+- `app.routes.ts` — public auth routes (guestGuard) + guarded shell with lazy-loaded children. `roleGuard('SALES','ADMIN')` on wizard routes; `roleGuard('ADMIN')` on `/admin/users`.
 
 ---
 
 ## 13. Roadmap
 
-Ordered by impact for a production release.
-
-1. **Move refresh token to HttpOnly cookie** — backend change plus a small update to `TokenStorageService`. Keep the access token in memory only.
-2. **Serve a strict CSP** — reverse proxy or backend response header. The policy in section 6 is compatible with this codebase.
-3. **Server-driven revoke on logout** — a `POST /auth/logout` that invalidates the refresh token family on the backend.
-4. **Real-time status updates** — WebSocket or SSE channel for application status changes; the dashboard could subscribe and patch its list signal.
-5. **Dark mode** — Material's M3 API supports it; the theme in `styles.scss` just needs a dark token block and a UI toggle.
-6. **Export to CSV** — dashboard list export, straightforward with the existing pagination envelope.
-7. **i18n** — Angular's built-in `@angular/localize` with a language switcher in the header.
-8. **Reconnect the notification service to a proper backend logout** — replace the current client-only logout with a server-side revoke call.
+1. **Move refresh token to HttpOnly cookie** — backend change + small `TokenStorageService` update.
+2. **Serve a strict CSP** — reverse proxy or backend header.
+3. **Server-side logout** — `POST /auth/logout` revoking the token family.
+4. **Real-time updates** — WebSocket/SSE for status changes; the dashboard could subscribe and patch its list signal.
+5. **Dark mode** — Material M3 dark token block + UI toggle.
+6. **Export to CSV** — dashboard list export.
+7. **i18n** — `@angular/localize` with a language switcher.
+8. **Optimistic concurrency** — `If-Unmodified-Since` or a version column to prevent stale writes when multiple admins act.

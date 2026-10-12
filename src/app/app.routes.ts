@@ -3,14 +3,6 @@ import { authGuard } from '@core/auth/auth.guard';
 import { guestGuard } from '@core/auth/guest.guard';
 import { roleGuard } from '@core/auth/role.guard';
 
-/**
- * Top-level route table.
- *
- *  - /login, /signup are public (guestGuard) — no shell.
- *  - The shell wraps authenticated routes and hosts the header + sidenav.
- *  - Feature areas are lazy-loaded via loadComponent.
- *  - /admin/* is gated behind roleGuard('ADMIN').
- */
 export const routes: Routes = [
   {
     path: 'login',
@@ -40,6 +32,14 @@ export const routes: Routes = [
       },
       {
         path: 'applications/new',
+        canActivate: [roleGuard('SALES', 'ADMIN')],
+        loadComponent: () =>
+          import('@features/applications/wizard/wizard.component').then(
+            (m) => m.WizardComponent,
+          ),
+      },
+      {
+        path: 'applications/:id/edit',
         canActivate: [roleGuard('SALES', 'ADMIN')],
         loadComponent: () =>
           import('@features/applications/wizard/wizard.component').then(

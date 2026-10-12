@@ -6,6 +6,7 @@ import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatPaginatorModule, type PageEvent } from '@angular/material/paginator';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
+import { MatSelectModule } from '@angular/material/select';
 import {
   Observable,
   catchError,
@@ -46,6 +47,7 @@ type ViewState =
     MatIconModule,
     MatPaginatorModule,
     MatProgressBarModule,
+     MatSelectModule,
   ],
   templateUrl: './users.component.html',
 })

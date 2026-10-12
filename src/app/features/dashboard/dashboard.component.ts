@@ -1,5 +1,5 @@
-import { HttpClient, HttpErrorResponse } from '@angular/common/http';
 import { CurrencyPipe, DatePipe } from '@angular/common';
+import { HttpErrorResponse } from '@angular/common/http';
 import { Component, computed, inject, signal } from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
@@ -23,18 +23,17 @@ import {
   startWith,
   switchMap,
 } from 'rxjs';
+import { ApplicationsApi } from '@core/api/applications.api';
 import { AuthService } from '@core/auth/auth.service';
-import { MerchantApplication, ApplicationStatus } from '@core/models/application.model';
-import { Paginated } from '@core/models/pagination.model';
-import { environment } from '@env/environment';
+
+import type { Paginated } from '@core/models/pagination.model';
 import { StatusBadgeComponent } from '@shared/components/status-badge/status-badge.component';
 import { HasRoleDirective } from '@shared/directives/has-role.directive';
+import { MerchantApplication, ApplicationStatus } from '@core/models/application.model';
 
+// NOTE: the import path above is `@core/models/application.model`
+// (singular), not `.models`. Fix on paste.
 
-/**
- * Discriminated union describing the dashboard's read state.
- * Only one of these is active at a time, and the template switches on `kind`.
- */
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'success'; payload: Paginated<MerchantApplication> }
@@ -45,18 +44,6 @@ interface StatusOption {
   label: string;
 }
 
-/**
- * Dashboard — paginated list of merchant applications.
- *
- * Data flow:
- *   pageIndex / pageSize / statusFilter / searchInput (signals)
- *     -> debounced search via toObservable + debounceTime
- *     -> combineLatest into a single fetch stream
- *     -> switchMap to HTTP, mapping success/error to ViewState
- *     -> toSignal back into the template
- *
- * Filters reset the page to 0 to avoid landing on an empty page.
- */
 @Component({
   selector: 'app-dashboard',
   imports: [
@@ -77,27 +64,23 @@ interface StatusOption {
   templateUrl: './dashboard.component.html',
 })
 export class DashboardComponent {
-  private readonly http = inject(HttpClient);
+  private readonly api = inject(ApplicationsApi);
   private readonly auth = inject(AuthService);
 
   readonly user = this.auth.user;
+  readonly canCreate = computed(() => this.auth.hasRole('SALES', 'ADMIN'));
+  readonly canAdmin = computed(() => this.auth.hasRole('ADMIN'));
 
-  // -----------------------------------------------------------------------
-  // Filter state
-  // -----------------------------------------------------------------------
-
-  /** Material paginator uses zero-indexed pages; the API uses one-indexed. */
   readonly pageIndex = signal(0);
   readonly pageSize = signal(10);
   readonly statusFilter = signal<ApplicationStatus | null>(null);
   readonly searchInput = signal('');
 
-  /** Incremented by the Retry button to force a refetch. */
-  private readonly reload = signal(0);
+  /** Rows with pending delete confirmation (admin only). */
+  readonly pendingDelete = signal<string | null>(null);
+  readonly actionError = signal<string | null>(null);
 
-  // -----------------------------------------------------------------------
-  // Debounced search: signal -> observable -> debounce -> signal
-  // -----------------------------------------------------------------------
+  private readonly reload = signal(0);
 
   private readonly debouncedSearch = toSignal(
     toObservable(this.searchInput).pipe(
@@ -108,10 +91,6 @@ export class DashboardComponent {
     { initialValue: '' },
   );
 
-  // -----------------------------------------------------------------------
-  // Fetch pipeline
-  // -----------------------------------------------------------------------
-
   private readonly state$: Observable<ViewState> = combineLatest([
     toObservable(this.pageIndex),
     toObservable(this.pageSize),
@@ -119,38 +98,28 @@ export class DashboardComponent {
     toObservable(this.debouncedSearch),
     toObservable(this.reload),
   ]).pipe(
-    switchMap(([pageIndex, pageSize, status, search]) => {
-      const params: Record<string, string> = {
-        page: String(pageIndex + 1),
-        limit: String(pageSize),
-      };
-      if (status) params['status'] = status;
-      if (search.trim()) params['search'] = search.trim();
-
-      return this.http
-        .get<Paginated<MerchantApplication>>(
-          `${environment.apiUrl}/applications`,
-          { params },
-        )
+    switchMap(([pageIndex, pageSize, status, search]) =>
+      this.api
+        .list({
+          page: pageIndex + 1,
+          limit: pageSize,
+          status: status ?? undefined,
+          search: search.trim() || undefined,
+        })
         .pipe(
           map((payload) => ({ kind: 'success' as const, payload })),
           catchError((error: unknown) =>
             of({ kind: 'error' as const, message: describeError(error) }),
           ),
           startWith({ kind: 'loading' as const }),
-        );
-    }),
+        ),
+    ),
     shareReplay({ bufferSize: 1, refCount: true }),
   );
 
-  /** The single source of truth consumed by the template. */
   readonly state = toSignal(this.state$, {
     initialValue: { kind: 'loading' } as ViewState,
   });
-
-  // -----------------------------------------------------------------------
-  // Derived values for the template
-  // -----------------------------------------------------------------------
 
   readonly statusOptions: StatusOption[] = [
     { value: null, label: 'All statuses' },
@@ -178,10 +147,6 @@ export class DashboardComponent {
     return s.kind === 'error' ? s.message : null;
   });
 
-  // -----------------------------------------------------------------------
-  // Actions
-  // -----------------------------------------------------------------------
-
   onPageChange(event: PageEvent): void {
     this.pageIndex.set(event.pageIndex);
     this.pageSize.set(event.pageSize);
@@ -200,12 +165,42 @@ export class DashboardComponent {
   retry(): void {
     this.reload.update((n) => n + 1);
   }
+
+  isEditableByCurrentUser(app: MerchantApplication): boolean {
+    if (app.status !== 'DRAFT') return false;
+    const role = this.auth.role();
+    if (role === 'ADMIN') return true;
+    if (role === 'SALES') return app.sales_rep.id === this.user()?.id;
+    return false;
+  }
+
+  requestDelete(app: MerchantApplication): void {
+    this.pendingDelete.set(app.id);
+    this.actionError.set(null);
+  }
+
+  cancelDelete(): void {
+    this.pendingDelete.set(null);
+  }
+
+  confirmDelete(app: MerchantApplication): void {
+    this.api.delete(app.id).subscribe({
+      next: () => {
+        this.pendingDelete.set(null);
+        this.reload.update((n) => n + 1);
+      },
+      error: (error: unknown) => {
+        this.pendingDelete.set(null);
+        this.actionError.set(describeError(error));
+      },
+    });
+  }
 }
 
-/** Human-friendly message for a failed list request. */
 function describeError(error: unknown): string {
   if (error instanceof HttpErrorResponse) {
     if (error.status === 0) return 'Cannot reach the server. Is the backend running?';
+    if (error.status === 403) return 'You do not have permission to perform this action.';
     return error.error?.detail ?? `Request failed (${error.status}).`;
   }
   return 'Something went wrong loading applications.';

@@ -2,7 +2,9 @@
   <!-- Header ------------------------------------------------------------>
   <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">New merchant application</h1>
+      <h1 class="text-2xl font-semibold">
+        {{ isEditMode() ? 'Edit draft application' : 'New merchant application' }}
+      </h1>
       <p class="text-sm text-surface-800">
         Your draft is saved automatically as you type.
       </p>
@@ -10,6 +12,10 @@
 
     <app-save-status [status]="saveStatus()" />
   </header>
+
+  @if (loadingExisting()) {
+    <mat-progress-bar mode="indeterminate" />
+  }
 
   @if (submitting()) {
     <mat-progress-bar mode="indeterminate" />

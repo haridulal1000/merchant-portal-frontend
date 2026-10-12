@@ -76,17 +76,18 @@
                     {{ user.email }}
                   </td>
                   <td class="px-4 py-3">
-                    <select
-                      class="rounded border border-surface-200 bg-white px-2 py-1 text-sm disabled:opacity-60"
-                      [value]="user.role"
-                      [disabled]="isCurrentUser(user) || busyUser() === user.id"
-                      [attr.aria-label]="'Change role for ' + user.name"
-                      (change)="changeRole(user, $any($event.target).value)"
-                    >
-                      @for (r of roleOptions; track r) {
-                        <option [value]="r">{{ r }}</option>
-                      }
-                    </select>
+                    <mat-form-field appearance="outline" class="w-40 !text-xs" subscriptSizing="dynamic">
+                      <mat-select
+                        [value]="user.role"
+                        [disabled]="isCurrentUser(user) || busyUser() === user.id"
+                        [attr.aria-label]="'Change role for ' + user.name"
+                        (valueChange)="changeRole(user, $event)"
+                      >
+                        @for (r of roleOptions; track r) {
+                          <mat-option [value]="r">{{ r }}</mat-option>
+                        }
+                      </mat-select>
+                    </mat-form-field>
                   </td>
                   <td class="hidden px-4 py-3 text-surface-800 lg:table-cell">
                     {{ user.created_at | date: 'mediumDate' }}

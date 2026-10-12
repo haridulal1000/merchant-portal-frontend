@@ -1,27 +1,22 @@
 <section class="space-y-4">
-  <!-- Header -------------------------------------------------------------->
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div>
-      <h1 class="text-2xl font-semibold">Applications</h1>
+      <h1 class="text-2xl font-semibold">
+        {{ canAdmin() ? 'All applications' : canCreate() ? 'My applications' : 'My review queue' }}
+      </h1>
       @if (user(); as u) {
-        <p class="text-sm text-surface-800">
-          Signed in as {{ u.name }} ({{ u.role }})
-        </p>
+        <p class="text-sm text-surface-800">Signed in as {{ u.name }} ({{ u.role }})</p>
       }
     </div>
 
-    <a
-      *appHasRole="['SALES', 'ADMIN']"
-      mat-flat-button
-      color="primary"
-      routerLink="/applications/new"
-    >
-      <mat-icon>add</mat-icon>
-      New application
-    </a>
+    @if (canCreate()) {
+      <a mat-flat-button color="primary" routerLink="/applications/new">
+        <mat-icon>add</mat-icon>
+        New application
+      </a>
+    }
   </header>
 
-  <!-- Filters ------------------------------------------------------------->
   <div class="flex flex-col gap-3 sm:flex-row sm:items-start">
     <mat-form-field appearance="outline" class="w-full sm:w-72">
       <mat-label>Search</mat-label>
@@ -36,10 +31,7 @@
 
     <mat-form-field appearance="outline" class="w-full sm:w-56">
       <mat-label>Status</mat-label>
-      <mat-select
-        [value]="statusFilter()"
-        (valueChange)="onStatusChange($event)"
-      >
+      <mat-select [value]="statusFilter()" (valueChange)="onStatusChange($event)">
         @for (opt of statusOptions; track opt.value) {
           <mat-option [value]="opt.value">{{ opt.label }}</mat-option>
         }
@@ -47,12 +39,22 @@
     </mat-form-field>
   </div>
 
-  <!-- Loading bar --------------------------------------------------------->
+  @if (actionError(); as msg) {
+    <div
+      role="alert"
+      class="flex items-start justify-between gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800"
+    >
+      <span>{{ msg }}</span>
+      <button mat-icon-button type="button" aria-label="Dismiss" (click)="actionError.set(null)">
+        <mat-icon>close</mat-icon>
+      </button>
+    </div>
+  }
+
   @if (isLoading()) {
     <mat-progress-bar mode="indeterminate" />
   }
 
-  <!-- Error state --------------------------------------------------------->
   @if (errorMessage(); as msg) {
     <div
       role="alert"
@@ -64,24 +66,25 @@
     </div>
   }
 
-  <!-- Table / empty state ------------------------------------------------->
   @if (!errorMessage()) {
     <div class="overflow-hidden rounded-lg border border-surface-200 bg-surface-0">
       @if (rows().length === 0 && !isLoading()) {
         <div class="p-12 text-center">
           <mat-icon class="text-5xl text-surface-200">inbox</mat-icon>
-          <p class="mt-3 text-sm text-surface-800">No applications found.</p>
-          <a
-            *appHasRole="['SALES', 'ADMIN']"
-            mat-stroked-button
-            routerLink="/applications/new"
-            class="mt-4"
-          >
-            Create your first application
-          </a>
+          <p class="mt-3 text-sm text-surface-800">
+            {{ canCreate() ? 'No applications found.' : 'No applications assigned to you yet.' }}
+          </p>
+          @if (canCreate()) {
+            <a
+              mat-stroked-button
+              routerLink="/applications/new"
+              class="mt-4"
+            >
+              Create your first application
+            </a>
+          }
         </div>
       } @else {
-        <!-- Table scrolls horizontally on small screens. -->
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead
@@ -89,45 +92,89 @@
             >
               <tr>
                 <th class="px-4 py-3 font-medium">Merchant</th>
-                <th class="hidden px-4 py-3 font-medium md:table-cell">
-                  Business Type
-                </th>
-                <th class="hidden px-4 py-3 font-medium lg:table-cell">
-                  Annual Revenue
-                </th>
+                <th class="hidden px-4 py-3 font-medium lg:table-cell">Created by</th>
+                <th class="hidden px-4 py-3 font-medium xl:table-cell">Assigned to</th>
                 <th class="px-4 py-3 font-medium">Status</th>
-                <th class="hidden px-4 py-3 font-medium lg:table-cell">
-                  Updated
-                </th>
+                <th class="hidden px-4 py-3 font-medium lg:table-cell">Updated</th>
+                <th class="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               @for (row of rows(); track row.id) {
                 <tr class="border-t border-surface-100 hover:bg-surface-50">
                   <td class="px-4 py-3">
-                    <a
-                      [routerLink]="['/applications', row.id]"
-                      class="block focus:outline-none"
-                    >
+                    <a [routerLink]="['/applications', row.id]" class="block">
                       <div class="font-medium text-blue-700 hover:underline">
                         {{ row.merchant_name }}
                       </div>
-                      <div class="text-xs text-surface-800">
-                        {{ row.contact_email }}
-                      </div>
+                      <div class="text-xs text-surface-800">{{ row.contact_email }}</div>
                     </a>
                   </td>
-                  <td class="hidden px-4 py-3 md:table-cell">
-                    {{ row.business_type }}
-                  </td>
                   <td class="hidden px-4 py-3 lg:table-cell">
-                    {{ row.annual_revenue | currency: 'USD' : 'symbol' : '1.0-0' }}
+                    <div>{{ row.sales_rep.name }}</div>
+                    <div class="text-xs text-surface-800">{{ row.sales_rep.email }}</div>
+                  </td>
+                  <td class="hidden px-4 py-3 xl:table-cell">
+                    @if (row.assigned_reviewer) {
+                      <div>{{ row.assigned_reviewer.name }}</div>
+                      <div class="text-xs text-surface-800">
+                        {{ row.assigned_reviewer.email }}
+                      </div>
+                    } @else {
+                      <span class="text-xs italic text-surface-800">Unassigned</span>
+                    }
                   </td>
                   <td class="px-4 py-3">
                     <app-status-badge [status]="row.status" />
                   </td>
                   <td class="hidden px-4 py-3 text-surface-800 lg:table-cell">
                     {{ row.updated_at | date: 'short' }}
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    @if (pendingDelete() === row.id) {
+                      <div class="flex items-center justify-end gap-2">
+                        <span class="text-xs text-red-700">Delete?</span>
+                        <button
+                          mat-flat-button
+                          color="warn"
+                          type="button"
+                          class="!h-8 !text-xs"
+                          (click)="confirmDelete(row)"
+                        >
+                          Yes
+                        </button>
+                        <button
+                          mat-stroked-button
+                          type="button"
+                          class="!h-8 !text-xs"
+                          (click)="cancelDelete()"
+                        >
+                          No
+                        </button>
+                      </div>
+                    } @else {
+                      <div class="flex items-center justify-end gap-1">
+                        @if (isEditableByCurrentUser(row)) {
+                          <a
+                            mat-icon-button
+                            [routerLink]="['/applications', row.id, 'edit']"
+                            [attr.aria-label]="'Edit ' + row.merchant_name"
+                          >
+                            <mat-icon>edit</mat-icon>
+                          </a>
+                        }
+                        @if (canAdmin()) {
+                          <button
+                            mat-icon-button
+                            type="button"
+                            [attr.aria-label]="'Delete ' + row.merchant_name"
+                            (click)="requestDelete(row)"
+                          >
+                            <mat-icon>delete_outline</mat-icon>
+                          </button>
+                        }
+                      </div>
+                    }
                   </td>
                 </tr>
               }

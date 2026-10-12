@@ -1,8 +1,7 @@
 <section class="mx-auto max-w-4xl space-y-4">
-  <!-- Header -->
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="flex items-center gap-3">
-      <button mat-icon-button type="button" aria-label="Back to dashboard" (click)="goBack()">
+      <button mat-icon-button type="button" aria-label="Back" (click)="goBack()">
         <mat-icon>arrow_back</mat-icon>
       </button>
       <div>
@@ -10,7 +9,7 @@
           {{ application()?.merchant_name ?? 'Application' }}
         </h1>
         @if (application(); as app) {
-          <div class="mt-1 flex items-center gap-2">
+          <div class="mt-1 flex flex-wrap items-center gap-2">
             <app-status-badge [status]="app.status" />
             <span class="text-xs text-surface-800">
               Created {{ app.created_at | date: 'mediumDate' }}
@@ -26,16 +25,92 @@
   }
 
   @if (errorMessage(); as msg) {
-    <div
-      role="alert"
-      class="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800"
-    >
+    <div role="alert" class="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
       {{ msg }}
     </div>
   }
 
   @if (application(); as app) {
-    <!-- Merchant details -->
+    <!-- Admin: assignment panel ------------------------------------------>
+    @if (canAssign()) {
+      <mat-card *appHasRole="['ADMIN']">
+        <mat-card-header>
+          <mat-card-title class="text-base font-medium">Assignment</mat-card-title>
+        </mat-card-header>
+        <mat-card-content class="space-y-3">
+          @if (app.status === 'DRAFT') {
+            <p class="text-sm text-surface-800">
+              This application is still a draft. It must be submitted before it can be assigned.
+            </p>
+          } @else {
+            @if (app.assigned_reviewer) {
+              <div class="flex items-center justify-between gap-3 rounded-md bg-surface-50 px-3 py-2">
+                <div class="text-sm">
+                  <div class="font-medium">{{ app.assigned_reviewer.name }}</div>
+                  <div class="text-xs text-surface-800">{{ app.assigned_reviewer.email }}</div>
+                </div>
+                <button
+                  mat-stroked-button
+                  type="button"
+                  [disabled]="assigning()"
+                  (click)="unassign()"
+                >
+                  Unassign
+                </button>
+              </div>
+            } @else {
+              <p class="text-sm text-surface-800">Not yet assigned.</p>
+            }
+
+            @if (assignError(); as msg) {
+              <div role="alert" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {{ msg }}
+              </div>
+            }
+
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-start">
+              <mat-form-field appearance="outline" class="w-full sm:w-96">
+                <mat-label>Assign to reviewer</mat-label>
+                <input
+                  matInput
+                  [formControl]="reviewerControl"
+                  [matAutocomplete]="auto"
+                  (focus)="loadReviewersIfNeeded()"
+                  placeholder="Search reviewers by name or email"
+                />
+                <mat-icon matPrefix>person_search</mat-icon>
+                <mat-autocomplete
+                  #auto="matAutocomplete"
+                  [displayWith]="displayReviewer"
+                >
+                  @for (r of filteredReviewers(); track r.id) {
+                    <mat-option [value]="r">
+                      {{ r.name }} — {{ r.email }}
+                    </mat-option>
+                  }
+                  @if (filteredReviewers().length === 0) {
+                    <mat-option disabled>No reviewers match.</mat-option>
+                  }
+                </mat-autocomplete>
+              </mat-form-field>
+
+              <button
+                mat-flat-button
+                color="primary"
+                type="button"
+                class="h-14 sm:h-14"
+                [disabled]="assigning()"
+                (click)="assignSelected()"
+              >
+                {{ assigning() ? 'Assigning…' : 'Assign' }}
+              </button>
+            </div>
+          }
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <!-- Merchant details --------------------------------------------------->
     <mat-card>
       <mat-card-header>
         <mat-card-title class="text-base font-medium">Merchant details</mat-card-title>
@@ -52,8 +127,13 @@
           </div>
           <div>
             <dt class="text-xs uppercase tracking-wide text-surface-800">Annual revenue</dt>
+            <dd class="mt-1 text-sm">{{ app.annual_revenue | currency: 'USD' : 'symbol' : '1.0-0' }}</dd>
+          </div>
+          <div>
+            <dt class="text-xs uppercase tracking-wide text-surface-800">Created by</dt>
             <dd class="mt-1 text-sm">
-              {{ app.annual_revenue | currency: 'USD' : 'symbol' : '1.0-0' }}
+              {{ app.sales_rep.name }}
+              <span class="text-xs text-surface-800">({{ app.sales_rep.email }})</span>
             </dd>
           </div>
           <div>
@@ -62,6 +142,15 @@
               {{ app.submitted_at ? (app.submitted_at | date: 'medium') : '—' }}
             </dd>
           </div>
+          @if (app.assigned_reviewer) {
+            <div>
+              <dt class="text-xs uppercase tracking-wide text-surface-800">Assigned reviewer</dt>
+              <dd class="mt-1 text-sm">
+                {{ app.assigned_reviewer.name }}
+                <span class="text-xs text-surface-800">({{ app.assigned_reviewer.email }})</span>
+              </dd>
+            </div>
+          }
           @if (app.risk_decision) {
             <div>
               <dt class="text-xs uppercase tracking-wide text-surface-800">Current risk level</dt>
@@ -76,23 +165,17 @@
     <mat-card>
       <mat-card-header class="flex-row items-center justify-between">
         <mat-card-title class="text-base font-medium">Contact details</mat-card-title>
-        <span class="text-xs text-surface-800">
-          Sensitive — click the eye to reveal
-        </span>
+        <span class="text-xs text-surface-800">Sensitive — click the eye to reveal</span>
       </mat-card-header>
       <mat-card-content>
         <dl class="grid grid-cols-1 gap-4 pt-2 sm:grid-cols-2">
           <div>
             <dt class="text-xs uppercase tracking-wide text-surface-800">Contact email</dt>
-            <dd class="mt-1 text-sm">
-              <app-masked-field [value]="app.contact_email" />
-            </dd>
+            <dd class="mt-1 text-sm"><app-masked-field [value]="app.contact_email" /></dd>
           </div>
           <div>
             <dt class="text-xs uppercase tracking-wide text-surface-800">Contact phone</dt>
-            <dd class="mt-1 text-sm">
-              <app-masked-field [value]="app.contact_phone" />
-            </dd>
+            <dd class="mt-1 text-sm"><app-masked-field [value]="app.contact_phone" /></dd>
           </div>
         </dl>
       </mat-card-content>
@@ -105,27 +188,19 @@
       </mat-card-header>
       <mat-card-content>
         @if (reviews().length === 0) {
-          <p class="pt-2 text-sm text-surface-800">
-            No decisions recorded yet.
-          </p>
+          <p class="pt-2 text-sm text-surface-800">No decisions recorded yet.</p>
         } @else {
           <ol class="mt-2 flex flex-col gap-3">
             @for (review of reviews(); track review.id) {
-              <li
-                class="rounded-md border border-surface-200 bg-surface-50 p-3 text-sm"
-              >
+              <li class="rounded-md border border-surface-200 bg-surface-50 p-3 text-sm">
                 <div class="flex flex-wrap items-center justify-between gap-2">
                   <div class="flex flex-wrap items-center gap-2">
                     <span class="font-medium">{{ actionLabel(review.action) }}</span>
-                    <span
-                      class="rounded-full bg-surface-100 px-2 py-0.5 text-xs font-medium text-surface-800"
-                    >
+                    <span class="rounded-full bg-surface-100 px-2 py-0.5 text-xs font-medium text-surface-800">
                       {{ review.decision }} risk
                     </span>
                   </div>
-                  <span class="text-xs text-surface-800">
-                    {{ review.created_at | date: 'medium' }}
-                  </span>
+                  <span class="text-xs text-surface-800">{{ review.created_at | date: 'medium' }}</span>
                 </div>
                 @if (review.comment) {
                   <p class="mt-2 text-surface-800">{{ review.comment }}</p>
@@ -137,102 +212,124 @@
       </mat-card-content>
     </mat-card>
 
-    <!-- Reviewer decision panel -->
+    <!-- Reviewer action panel -->
     @if (canReview() && isActionable()) {
-      <mat-card *appHasRole="['REVIEWER', 'ADMIN']">
-        <mat-card-header>
-          <mat-card-title class="text-base font-medium">Record decision</mat-card-title>
-          <mat-card-subtitle>
-            The action updates the application status; the risk level is your assessment.
-          </mat-card-subtitle>
-        </mat-card-header>
-        <mat-card-content>
-          @if (reviewError(); as msg) {
-            <div
-              role="alert"
-              class="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
-            >
-              {{ msg }}
+      @if (canActOnThisApplication()) {
+        <mat-card>
+          <mat-card-header>
+            <mat-card-title class="text-base font-medium">Record decision</mat-card-title>
+            <mat-card-subtitle>
+              The action updates the status; the risk level is your assessment.
+            </mat-card-subtitle>
+          </mat-card-header>
+          <mat-card-content>
+            @if (reviewError(); as msg) {
+              <div role="alert" class="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {{ msg }}
+              </div>
+            }
+            <form [formGroup]="reviewForm" (ngSubmit)="submitReview()" class="flex flex-col gap-2 pt-2">
+              <mat-form-field appearance="outline" class="w-full sm:w-96">
+                <mat-label>Action</mat-label>
+                <mat-select formControlName="action" required>
+                  @for (opt of actionOptions; track opt.value) {
+                    <mat-option [value]="opt.value">
+                      <div class="flex flex-col">
+                        <span>{{ opt.label }}</span>
+                        @if (opt.hint) {
+                          <span class="text-xs text-surface-800">{{ opt.hint }}</span>
+                        }
+                      </div>
+                    </mat-option>
+                  }
+                </mat-select>
+                <mat-icon matPrefix>gavel</mat-icon>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="w-full sm:w-72">
+                <mat-label>Risk level</mat-label>
+                <mat-select formControlName="decision" required>
+                  @for (opt of decisionOptions; track opt.value) {
+                    <mat-option [value]="opt.value">{{ opt.label }}</mat-option>
+                  }
+                </mat-select>
+                <mat-icon matPrefix>shield</mat-icon>
+              </mat-form-field>
+
+              <mat-form-field appearance="outline" class="w-full">
+                <mat-label>Comment (optional)</mat-label>
+                <textarea matInput formControlName="comment" rows="3" maxlength="2000"></textarea>
+              </mat-form-field>
+
+              <div class="flex justify-end">
+                <button mat-flat-button color="primary" type="submit" [disabled]="submittingReview() || reviewForm.invalid">
+                  <mat-icon>check</mat-icon>
+                  {{ submittingReview() ? 'Recording…' : 'Record decision' }}
+                </button>
+              </div>
+            </form>
+          </mat-card-content>
+        </mat-card>
+      } @else {
+        <mat-card>
+          <mat-card-content>
+            <div class="flex items-start gap-3 py-1">
+              <mat-icon class="text-surface-800">info</mat-icon>
+              <p class="text-sm text-surface-800">
+                This application is not assigned to you. A decision can only be
+                recorded by the assigned reviewer.
+              </p>
             </div>
-          }
-
-          <form
-            [formGroup]="reviewForm"
-            (ngSubmit)="submitReview()"
-            class="flex flex-col gap-2 pt-2"
-          >
-            <mat-form-field appearance="outline" class="w-full sm:w-96">
-              <mat-label>Action</mat-label>
-              <mat-select formControlName="action" required>
-                @for (opt of actionOptions; track opt.value) {
-                  <mat-option [value]="opt.value">
-                    <div class="flex flex-col">
-                      <span>{{ opt.label }}</span>
-                      @if (opt.hint) {
-                        <span class="text-xs text-surface-800">{{ opt.hint }}</span>
-                      }
-                    </div>
-                  </mat-option>
-                }
-              </mat-select>
-              <mat-icon matPrefix>gavel</mat-icon>
-            </mat-form-field>
-
-            <mat-form-field appearance="outline" class="w-full sm:w-72">
-              <mat-label>Risk level</mat-label>
-              <mat-select formControlName="decision" required>
-                @for (opt of decisionOptions; track opt.value) {
-                  <mat-option [value]="opt.value">{{ opt.label }}</mat-option>
-                }
-              </mat-select>
-              <mat-icon matPrefix>shield</mat-icon>
-            </mat-form-field>
-
-            <mat-form-field appearance="outline" class="w-full">
-              <mat-label>Comment (optional)</mat-label>
-              <textarea
-                matInput
-                formControlName="comment"
-                rows="3"
-                maxlength="2000"
-              ></textarea>
-              @if (reviewForm.controls.comment.hasError('maxlength')) {
-                <mat-error>Comment is too long.</mat-error>
-              }
-            </mat-form-field>
-
-            <div class="flex justify-end">
-              <button
-                mat-flat-button
-                color="primary"
-                type="submit"
-                [disabled]="submittingReview() || reviewForm.invalid"
-              >
-                <mat-icon>check</mat-icon>
-                {{ submittingReview() ? 'Recording…' : 'Record decision' }}
-              </button>
-            </div>
-          </form>
-        </mat-card-content>
-      </mat-card>
+          </mat-card-content>
+        </mat-card>
+      }
     }
 
-    <!-- Terminal state notice -->
-    @if (
-      canReview() &&
-      !isActionable() &&
-      (app.status === 'APPROVED' || app.status === 'REJECTED')
-    ) {
+    @if (canReview() && !isActionable() && (app.status === 'APPROVED' || app.status === 'REJECTED')) {
       <mat-card>
         <mat-card-content>
           <div class="flex items-start gap-3 py-1">
             <mat-icon class="text-surface-800">lock</mat-icon>
             <p class="text-sm text-surface-800">
               This application has reached a terminal state
-              (<strong>{{ app.status }}</strong>) and can no longer be actioned
-              through this panel.
+              (<strong>{{ app.status }}</strong>).
             </p>
           </div>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <!-- Danger zone (ADMIN) -->
+    @if (canDelete()) {
+      <mat-card *appHasRole="['ADMIN']" class="border border-red-200">
+        <mat-card-header>
+          <mat-card-title class="text-base font-medium text-red-700">Delete application</mat-card-title>
+        </mat-card-header>
+        <mat-card-content class="space-y-3">
+          <p class="text-sm text-surface-800">
+            Permanently removes this application and all of its reviews. This
+            cannot be undone.
+          </p>
+
+          @if (deleteError(); as msg) {
+            <div role="alert" class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {{ msg }}
+            </div>
+          }
+
+          @if (confirmingDelete()) {
+            <div class="flex items-center gap-2">
+              <button mat-flat-button color="warn" type="button" [disabled]="deleting()" (click)="confirmDelete()">
+                {{ deleting() ? 'Deleting…' : 'Yes, delete' }}
+              </button>
+              <button mat-stroked-button type="button" (click)="confirmingDelete.set(false)">Cancel</button>
+            </div>
+          } @else {
+            <button mat-stroked-button color="warn" type="button" (click)="confirmingDelete.set(true)">
+              <mat-icon>delete_outline</mat-icon>
+              Delete application
+            </button>
+          }
         </mat-card-content>
       </mat-card>
     }
