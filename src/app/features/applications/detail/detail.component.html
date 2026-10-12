@@ -1,5 +1,5 @@
 <section class="mx-auto max-w-4xl space-y-4">
-  <!-- Header ------------------------------------------------------------>
+  <!-- Header -->
   <header class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
     <div class="flex items-center gap-3">
       <button mat-icon-button type="button" aria-label="Back to dashboard" (click)="goBack()">
@@ -34,7 +34,6 @@
     </div>
   }
 
-  <!-- Success content --------------------------------------------------->
   @if (application(); as app) {
     <!-- Merchant details -->
     <mat-card>
@@ -63,6 +62,12 @@
               {{ app.submitted_at ? (app.submitted_at | date: 'medium') : '—' }}
             </dd>
           </div>
+          @if (app.risk_decision) {
+            <div>
+              <dt class="text-xs uppercase tracking-wide text-surface-800">Current risk level</dt>
+              <dd class="mt-1 text-sm">{{ app.risk_decision }}</dd>
+            </div>
+          }
         </dl>
       </mat-card-content>
     </mat-card>
@@ -93,15 +98,15 @@
       </mat-card-content>
     </mat-card>
 
-    <!-- Risk history -->
+    <!-- Decision history -->
     <mat-card>
       <mat-card-header>
-        <mat-card-title class="text-base font-medium">Risk history</mat-card-title>
+        <mat-card-title class="text-base font-medium">Decision history</mat-card-title>
       </mat-card-header>
       <mat-card-content>
         @if (reviews().length === 0) {
           <p class="pt-2 text-sm text-surface-800">
-            No risk decisions recorded yet.
+            No decisions recorded yet.
           </p>
         } @else {
           <ol class="mt-2 flex flex-col gap-3">
@@ -110,7 +115,14 @@
                 class="rounded-md border border-surface-200 bg-surface-50 p-3 text-sm"
               >
                 <div class="flex flex-wrap items-center justify-between gap-2">
-                  <span class="font-medium">{{ review.decision }}</span>
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-medium">{{ actionLabel(review.action) }}</span>
+                    <span
+                      class="rounded-full bg-surface-100 px-2 py-0.5 text-xs font-medium text-surface-800"
+                    >
+                      {{ review.decision }} risk
+                    </span>
+                  </div>
                   <span class="text-xs text-surface-800">
                     {{ review.created_at | date: 'medium' }}
                   </span>
@@ -125,11 +137,14 @@
       </mat-card-content>
     </mat-card>
 
-    <!-- Reviewer decision panel — hidden from SALES --------------------->
-    @if (canReview()) {
+    <!-- Reviewer decision panel -->
+    @if (canReview() && isActionable()) {
       <mat-card *appHasRole="['REVIEWER', 'ADMIN']">
         <mat-card-header>
           <mat-card-title class="text-base font-medium">Record decision</mat-card-title>
+          <mat-card-subtitle>
+            The action updates the application status; the risk level is your assessment.
+          </mat-card-subtitle>
         </mat-card-header>
         <mat-card-content>
           @if (reviewError(); as msg) {
@@ -146,14 +161,31 @@
             (ngSubmit)="submitReview()"
             class="flex flex-col gap-2 pt-2"
           >
+            <mat-form-field appearance="outline" class="w-full sm:w-96">
+              <mat-label>Action</mat-label>
+              <mat-select formControlName="action" required>
+                @for (opt of actionOptions; track opt.value) {
+                  <mat-option [value]="opt.value">
+                    <div class="flex flex-col">
+                      <span>{{ opt.label }}</span>
+                      @if (opt.hint) {
+                        <span class="text-xs text-surface-800">{{ opt.hint }}</span>
+                      }
+                    </div>
+                  </mat-option>
+                }
+              </mat-select>
+              <mat-icon matPrefix>gavel</mat-icon>
+            </mat-form-field>
+
             <mat-form-field appearance="outline" class="w-full sm:w-72">
-              <mat-label>Decision</mat-label>
+              <mat-label>Risk level</mat-label>
               <mat-select formControlName="decision" required>
                 @for (opt of decisionOptions; track opt.value) {
                   <mat-option [value]="opt.value">{{ opt.label }}</mat-option>
                 }
               </mat-select>
-              <mat-icon matPrefix>gavel</mat-icon>
+              <mat-icon matPrefix>shield</mat-icon>
             </mat-form-field>
 
             <mat-form-field appearance="outline" class="w-full">
@@ -181,6 +213,26 @@
               </button>
             </div>
           </form>
+        </mat-card-content>
+      </mat-card>
+    }
+
+    <!-- Terminal state notice -->
+    @if (
+      canReview() &&
+      !isActionable() &&
+      (app.status === 'APPROVED' || app.status === 'REJECTED')
+    ) {
+      <mat-card>
+        <mat-card-content>
+          <div class="flex items-start gap-3 py-1">
+            <mat-icon class="text-surface-800">lock</mat-icon>
+            <p class="text-sm text-surface-800">
+              This application has reached a terminal state
+              (<strong>{{ app.status }}</strong>) and can no longer be actioned
+              through this panel.
+            </p>
+          </div>
         </mat-card-content>
       </mat-card>
     }
